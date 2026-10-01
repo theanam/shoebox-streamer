@@ -1,0 +1,9 @@
+{
+  "name": "Shoebox",
+  "short_name": "Shoebox",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0d12",
+  "theme_color": "#0b0d12",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
