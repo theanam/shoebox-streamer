@@ -4,6 +4,11 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.2.1] - 2026-10-02
+
+### Changed
+- Shorter package description: "Stream your local videos or torrents to any device on your network."
+
 ## [0.2.0] - 2026-10-02
 
 ### Added

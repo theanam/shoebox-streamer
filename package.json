@@ -1,7 +1,7 @@
 {
   "name": "shoebox-streamer",
-  "version": "0.2.0",
-  "description": "Run it in a folder of videos and watch them from any device on your network: phone-friendly web player, smart transcoding, show detection, torrents and VLC.",
+  "version": "0.2.1",
+  "description": "Stream your local videos or torrents to any device on your network.",
   "type": "module",
   "bin": {
     "shoebox": "bin/shoebox.js"
