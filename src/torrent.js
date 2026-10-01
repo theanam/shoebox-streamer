@@ -138,7 +138,7 @@ export class Torrents {
       added: Date.now(),
       parsed: parsePath(rel),
       probe: null,
-      externalSubs: [],
+      externalSubs: this.library.findSidecars(abs, hash(rel), false),
       thumb: false,
       keyframesReady: false,
       virtualSource: true,

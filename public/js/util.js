@@ -31,6 +31,7 @@ export function fmtTime(sec) {
 }
 export function fmtDuration(sec) {
   if (!sec) return '';
+  if (sec < 60) return `${Math.round(sec)}s`;
   const m = Math.round(sec / 60);
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 }

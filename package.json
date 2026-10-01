@@ -1,6 +1,6 @@
 {
   "name": "shoebox-streamer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Run it in a folder of videos and watch them from any device on your network: phone-friendly web player, smart transcoding, show detection, torrents and VLC.",
   "type": "module",
   "bin": {
@@ -10,14 +10,16 @@
     "bin",
     "src",
     "public",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18.17"
   },
   "scripts": {
     "start": "node bin/shoebox.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test"
   },
   "keywords": [
     "video",
@@ -31,6 +33,15 @@
     "mdns"
   ],
   "license": "MIT",
+  "author": "Anam Ahmed <anam.ahmed.a@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theanam/shoebox-streamer.git"
+  },
+  "homepage": "https://github.com/theanam/shoebox-streamer#readme",
+  "bugs": {
+    "url": "https://github.com/theanam/shoebox-streamer/issues"
+  },
   "dependencies": {
     "bonjour-service": "^1.3.0",
     "hls.js": "^1.6.0",

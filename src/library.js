@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import { parsePath, normKey, similarity, naturalCompare } from './parse.js';
 import { probe, grabFrame, keyframes } from './ffmpeg.js';
 import { Artwork } from './artwork.js';
+import { parseSubtitleTags, languageName, toIso1 } from './lang.js';
 
 export const VIDEO_EXT = new Set([
   '.mp4', '.m4v', '.mkv', '.webm', '.mov', '.avi', '.wmv', '.flv', '.mpg', '.mpeg', '.ts', '.m2ts', '.mts', '.3gp', '.ogv', '.divx', '.vob',
@@ -102,7 +103,7 @@ export class Library extends EventEmitter {
     }, 1000);
   }
 
-  async walk(dir, depth, out, subs) {
+  async walk(dir, depth, out) {
     if (depth > 12) return;
     let entries;
     try {
@@ -124,15 +125,8 @@ export class Library extends EventEmitter {
           continue;
         }
       }
-      if (isDir) await this.walk(abs, depth + 1, out, subs);
-      else if (isFile) {
-        const ext = path.extname(e.name).toLowerCase();
-        if (VIDEO_EXT.has(ext) && !this.excluded.has(abs)) out.push(abs);
-        else if (SUB_EXT.has(ext)) {
-          if (!subs.has(dir)) subs.set(dir, []);
-          subs.get(dir).push(e.name);
-        }
-      }
+      if (isDir) await this.walk(abs, depth + 1, out);
+      else if (isFile && VIDEO_EXT.has(path.extname(e.name).toLowerCase()) && !this.excluded.has(abs)) out.push(abs);
     }
   }
 
@@ -145,8 +139,10 @@ export class Library extends EventEmitter {
     const t0 = Date.now();
     try {
       const files = [];
-      const subs = new Map();
-      await this.walk(this.root, 0, files, subs);
+      await this.walk(this.root, 0, files);
+      const videosPerDir = new Map();
+      for (const f of files) videosPerDir.set(path.dirname(f), (videosPerDir.get(path.dirname(f)) || 0) + 1);
+      const readDir = dirReader();
       const items = new Map();
       for (const abs of files) {
         let st;
@@ -161,13 +157,7 @@ export class Library extends EventEmitter {
         const prev = this.items.get(id);
         const cached = this.probeCache[rel];
         const fresh = cached && cached.size === st.size && cached.mtime === st.mtimeMs;
-        const base = path.basename(abs, path.extname(abs));
-        const dirSubs = (subs.get(path.dirname(abs)) || [])
-          .filter((s) => s.startsWith(base))
-          .map((s, i) => {
-            const mid = s.slice(base.length, -path.extname(s).length).replace(/^[._ -]+/, '');
-            return { file: path.join(path.dirname(abs), s), lang: mid || undefined, label: mid || `External ${i + 1}` };
-          });
+        const onlyVideo = videosPerDir.get(path.dirname(abs)) === 1;
         items.set(id, {
           id,
           rel,
@@ -179,7 +169,8 @@ export class Library extends EventEmitter {
           added: st.birthtimeMs || st.ctimeMs,
           parsed: parsePath(rel),
           probe: fresh ? cached.probe : prev?.probe && prev.size === st.size ? prev.probe : null,
-          externalSubs: dirSubs,
+          onlyVideo,
+          externalSubs: this.findSidecars(abs, id, onlyVideo, readDir),
           thumb: fs.existsSync(this.thumbPath(id)),
           keyframesReady: fs.existsSync(this.kfPath(id)),
         });
@@ -359,6 +350,55 @@ export class Library extends EventEmitter {
     }
   }
 
+  /**
+   * Subtitle files that belong to a video:
+   *  - next to it, named after it ("Movie.en.srt", "Movie.English.forced.srt")
+   *  - in a Subs/ or Subtitles/ folder beside it, by name or in a folder named after the video
+   *    ("Subs/Show.S01E01/2_English.srt", common in release packs)
+   *  - any subtitle in the folder (or its Subs/ folder) when the folder holds only this video
+   *  - ones previously downloaded into the cache because the video's folder was read-only
+   */
+  findSidecars(abs, id, onlyVideo, readDir = dirReader()) {
+    const dir = path.dirname(abs);
+    const base = path.basename(abs, path.extname(abs)).toLowerCase();
+    const found = new Map();
+    const add = (file, remainder) => {
+      if (found.has(file)) return;
+      const tags = parseSubtitleTags(remainder);
+      const name = languageName(tags.lang);
+      const label = [name || path.basename(file), tags.forced && '(forced)', tags.hi && 'SDH'].filter(Boolean).join(' ');
+      found.set(file, { key: 'e' + hash(file).slice(0, 10), file, lang: tags.lang, forced: tags.forced, hi: tags.hi, label });
+    };
+    const scanDir = (d, any) => {
+      for (const e of readDir(d)) {
+        if (e.isDir || !SUB_EXT.has(path.extname(e.name).toLowerCase())) continue;
+        const stem = e.name.slice(0, -path.extname(e.name).length);
+        if (stem.toLowerCase().startsWith(base)) add(path.join(d, e.name), stem.slice(base.length));
+        else if (any) add(path.join(d, e.name), stem);
+      }
+    };
+    scanDir(dir, onlyVideo);
+    for (const e of readDir(dir)) {
+      if (!e.isDir || !/^(subs?|subtitles?)$/i.test(e.name)) continue;
+      const subDir = path.join(dir, e.name);
+      scanDir(subDir, onlyVideo);
+      for (const inner of readDir(subDir)) {
+        if (inner.isDir && inner.name.toLowerCase() === base) scanDir(path.join(subDir, inner.name), true);
+      }
+    }
+    const cacheSubs = path.join(this.cacheDir, 'subs');
+    for (const e of readDir(cacheSubs)) {
+      if (e.name.startsWith(id + '.')) add(path.join(cacheSubs, e.name), e.name.slice(id.length, -path.extname(e.name).length));
+    }
+    return [...found.values()];
+  }
+
+  /** Re-read an item's subtitle files (after a download) without a full rescan. */
+  refreshSubtitles(item) {
+    item.externalSubs = this.findSidecars(item.path, item.id, !!item.onlyVideo);
+    this.emit('change');
+  }
+
   get(id) {
     return this.items.get(id) || this.virtual.get(id);
   }
@@ -415,14 +455,15 @@ export class Library extends EventEmitter {
       acodec: p?.audio?.[0]?.codec,
       audio: (p?.audio || []).map((a) => ({ n: a.n, codec: a.codec, lang: langName(a.lang), title: a.title, channels: a.channels, default: a.default })),
       subtitles: [
+        // Files beside the video come first: someone put them there on purpose.
+        ...(it.externalSubs || []).map((s) => ({ key: s.key, lang: s.lang, label: s.label, forced: s.forced, hi: s.hi, external: true })),
         ...(p?.subtitles || []).filter((s) => s.text).map((s) => ({
           key: `i${s.index}`,
-          lang: s.lang,
+          lang: toIso1(s.lang) || s.lang,
           label: [s.title, langName(s.lang)].filter(Boolean).join(' · ') || `Track ${s.n + 1}`,
           default: s.default,
           forced: s.forced,
         })),
-        ...(it.externalSubs || []).map((s, i) => ({ key: `e${i}`, lang: s.lang, label: langName(s.lang) || s.label })),
       ],
       torrent: it.virtualSource ? { infoHash: it.infoHash, progress: it.progressFn?.() ?? 0 } : undefined,
     };
@@ -458,6 +499,21 @@ function langName(code) {
   } catch {
     return code;
   }
+}
+
+/** Cached directory listing for one scan; missing directories read as empty. */
+function dirReader() {
+  const cache = new Map();
+  return (d) => {
+    if (!cache.has(d)) {
+      try {
+        cache.set(d, fs.readdirSync(d, { withFileTypes: true }).map((e) => ({ name: e.name, isDir: e.isDirectory() })));
+      } catch {
+        cache.set(d, []);
+      }
+    }
+    return cache.get(d);
+  };
 }
 
 function mostCommon(arr) {

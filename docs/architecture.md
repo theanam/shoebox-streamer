@@ -1,4 +1,4 @@
-# Shoebox — plan
+# Shoebox architecture
 
 `npx shoebox` (or `npm i -g shoebox-streamer` then `shoebox`) inside a folder of videos →
 a LAN video server with a phone-friendly web player at `http://shoebox.local:7171`.

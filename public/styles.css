@@ -1181,7 +1181,7 @@ body.no-scroll #toasts {
   bottom: 84px;
   z-index: 5;
   min-width: 230px;
-  max-width: calc(100vw - 28px);
+  max-width: min(420px, calc(100vw - 28px));
   max-height: 60vh;
   overflow: auto;
   padding: 6px;
@@ -1228,6 +1228,52 @@ body.no-scroll #toasts {
   opacity: 0.6;
   font-size: 12.5px;
   margin-left: auto;
+}
+
+.p-pop .pop-note {
+  padding: 6px 10px 8px;
+  font-size: 13px;
+  opacity: 0.65;
+  line-height: 1.45;
+}
+.p-pop .pop-note code {
+  background: rgba(255, 255, 255, 0.12);
+}
+.p-pop .pop-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 4px;
+}
+.p-pop .pop-row button {
+  width: auto;
+  flex: none;
+  justify-content: center;
+  padding: 7px 10px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.p-pop .pop-val {
+  flex: 1;
+  opacity: 0.7;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.p-pop button.cand {
+  align-items: flex-start;
+}
+.p-pop .cand-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.p-pop .cand-name {
+  word-break: break-all;
+  font-size: 13.5px;
+}
+.p-pop .cand-main .sub {
+  margin-left: 0;
 }
 
 /* episode drawer */

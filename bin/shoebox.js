@@ -16,15 +16,18 @@ Usage:
   shoebox [folder]                serve a folder (default: current directory)
   shoebox "magnet:?xt=..."        serve the current folder and start downloading a torrent
   shoebox movie.torrent           same, from a .torrent file
+  shoebox config                  set up defaults, artwork and subtitle keys (saved to ~/.shoebox.conf)
+  shoebox config show             print the current settings (secrets masked)
+  shoebox config path             print where the settings file lives
 
-Options:
+Options (override the settings file for this run):
   -p, --port <n>       port to listen on (default 7171, next free port if taken)
   -n, --name <name>    mDNS name, reachable as http://<name>.local (default "shoebox")
       --host <addr>    interface to bind (default 0.0.0.0, all interfaces)
       --open           open the web UI in this computer's browser
       --no-mdns        don't advertise on the local network via mDNS/Bonjour
       --no-watch       don't watch the folder for new files
-      --offline        don't fetch poster art from the internet
+      --offline        don't fetch artwork or subtitles from the internet
       --tmdb-key <k>   TMDB API key for better movie/show posters (or env TMDB_API_KEY)
   -v, --verbose        log every ffmpeg job
   -h, --help           show this help
@@ -37,7 +40,7 @@ try {
     allowPositionals: true,
     options: {
       port: { type: 'string', short: 'p' },
-      name: { type: 'string', short: 'n', default: 'shoebox' },
+      name: { type: 'string', short: 'n' },
       host: { type: 'string', default: '0.0.0.0' },
       open: { type: 'boolean', default: false },
       'no-mdns': { type: 'boolean', default: false },
@@ -62,6 +65,31 @@ if (opts.version) {
   console.log(pkg.version);
   process.exit(0);
 }
+
+if (args.positionals[0] === 'config' && !fs.existsSync('config')) {
+  const { runWizard, showConfig } = await import('../src/wizard.js');
+  const { CONFIG_PATH } = await import('../src/config.js');
+  const sub = args.positionals[1];
+  if (sub === 'show') showConfig();
+  else if (sub === 'path') console.log(CONFIG_PATH);
+  else if (!sub) await runWizard();
+  else {
+    console.error(`Unknown config command "${sub}". Use: shoebox config [show|path]`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+// Settings: built-in defaults < ~/.shoebox.conf < command-line flags.
+const { loadConfig } = await import('../src/config.js');
+const loaded = loadConfig();
+const config = loaded.config;
+if (opts.name) config.name = opts.name;
+if (opts['no-mdns']) config.mdns = false;
+if (opts['no-watch']) config.watch = false;
+if (opts.offline) config.artwork = false;
+if (opts['tmdb-key']) config.tmdbKey = opts['tmdb-key'];
+else if (process.env.TMDB_API_KEY) config.tmdbKey = process.env.TMDB_API_KEY;
 
 const c = process.stdout.isTTY && !process.env.NO_COLOR
   ? { b: (s) => `\x1b[1m${s}\x1b[22m`, dim: (s) => `\x1b[2m${s}\x1b[22m`, cyan: (s) => `\x1b[36m${s}\x1b[39m`, yellow: (s) => `\x1b[33m${s}\x1b[39m`, red: (s) => `\x1b[31m${s}\x1b[39m`, green: (s) => `\x1b[32m${s}\x1b[39m` }
@@ -102,16 +130,20 @@ const { createApp } = await import('../src/server.js');
 const { publish } = await import('../src/mdns.js');
 const { Torrents } = await import('../src/torrent.js');
 const { pickEncoder } = await import('../src/ffmpeg.js');
+const { SubtitleService } = await import('../src/subtitles.js');
+
+if (loaded.status === 'corrupt') log(c.yellow(`Couldn't read ${loaded.path} (${loaded.error}); using default settings. Fix it with \`shoebox config\`.`));
 
 const library = new Library(root, { log });
 const artwork = new Artwork(library.cacheDir, {
-  offline: opts.offline,
-  tmdbKey: opts['tmdb-key'] || process.env.TMDB_API_KEY,
+  offline: !config.artwork,
+  tmdbKey: config.tmdbKey,
   log: (m) => log(m, true),
 });
 library.artwork = artwork;
 
-let port = parseInt(opts.port || process.env.PORT || '7171', 10);
+let port = parseInt(opts.port || process.env.PORT || config.port, 10);
+const explicitPort = !!(opts.port || process.env.PORT);
 const torrents = new Torrents({ library, getPort: () => port, log });
 let mdns = null;
 
@@ -134,13 +166,14 @@ const info = () => ({
   urls: lanAddresses().map((a) => `http://${a}:${port}`),
 });
 
-const app = createApp({ library, artwork, torrents, info, log });
+const subtitles = new SubtitleService({ config, library, offline: !!opts.offline, log });
+const app = createApp({ library, artwork, torrents, subtitles, info, log });
 
 function listen(p, attempts = 20) {
   return new Promise((resolve, reject) => {
     const onError = (e) => {
       app.server.off('listening', onListening);
-      if (e.code === 'EADDRINUSE' && attempts > 1 && !opts.port) resolve(listen(p + 1, attempts - 1));
+      if (e.code === 'EADDRINUSE' && attempts > 1 && !explicitPort) resolve(listen(p + 1, attempts - 1));
       else reject(e);
     };
     const onListening = () => {
@@ -160,7 +193,7 @@ try {
   process.exit(1);
 }
 
-if (!opts['no-mdns']) mdns = publish({ name: opts.name, port, log: (m) => log(m, true) });
+if (config.mdns) mdns = publish({ name: config.name, port, log: (m) => log(m, true) });
 
 const urls = info().urls;
 const primary = mdns ? `http://${mdns.host}:${port}` : urls[0] || `http://localhost:${port}`;
@@ -182,9 +215,15 @@ try {
 } catch {}
 
 pickEncoder().then((enc) => log(`Video encoder: ${enc === 'libx264' ? 'libx264 (software)' : enc + ' (hardware)'}`));
+if (subtitles.enabled) {
+  const si = subtitles.publicInfo();
+  log(`Online subtitles: ${si.providers.join(' + ')} (${si.languages.join(', ')}${si.autoDownload ? ', automatic' : ', on request'})`);
+} else if (loaded.status === 'missing') {
+  log(c.dim('Tip: run `shoebox config` to set up online subtitles.'));
+}
 
 await library.scan();
-if (!opts['no-watch']) library.watch();
+if (config.watch) library.watch();
 
 await torrents.init();
 if (torrentSources.length) {

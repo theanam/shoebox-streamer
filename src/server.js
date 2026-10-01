@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { decide } from './decide.js';
 import { HlsManager, profileString } from './hls.js';
 import { toWebVTT, pickEncoder } from './ffmpeg.js';
+import { decodeText } from './subtitles.js';
 
 const require = createRequire(import.meta.url);
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -103,6 +104,29 @@ function serveCached(res, file, type, maxAge = 3600) {
   });
 }
 
+/** SRT → WebVTT in JS (handles any text encoding); other formats go through ffmpeg on a UTF-8 copy. */
+export function srtToVtt(text) {
+  const body = text
+    .replace(/\r\n?/g, '\n')
+    .replace(/\{\\[^}]*\}/g, '') // {\an8} style overrides
+    .replace(/(\d+):(\d\d):(\d\d)[,.](\d{1,3})/g, (_, h, m, s, ms) => `${h.padStart(2, '0')}:${m}:${s}.${ms.padEnd(3, '0')}`);
+  return 'WEBVTT\n\n' + body.trim() + '\n';
+}
+
+async function externalToVtt(file, cacheDir) {
+  const text = decodeText(await fsp.readFile(file));
+  const ext = path.extname(file).toLowerCase();
+  if (ext === '.vtt') return text.startsWith('WEBVTT') ? text : 'WEBVTT\n\n' + text;
+  if (ext === '.srt') return srtToVtt(text);
+  const tmp = path.join(cacheDir, `conv-${process.pid}-${Date.now()}${ext}`);
+  await fsp.writeFile(tmp, text, 'utf8');
+  try {
+    return await toWebVTT(tmp);
+  } finally {
+    fsp.rm(tmp, { force: true }).catch(() => {});
+  }
+}
+
 const isLoopback = (req) => {
   const a = req.socket.remoteAddress || '';
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
@@ -115,7 +139,7 @@ function episodeLabel(lib, it) {
   return [show?.name, se, it.parsed.title].filter(Boolean).join(' - ');
 }
 
-export function createApp({ library, artwork, torrents, info, log }) {
+export function createApp({ library, artwork, torrents, subtitles, info, log }) {
   const hls = new HlsManager({ library, log });
   const sseClients = new Set();
 
@@ -138,6 +162,7 @@ export function createApp({ library, artwork, torrents, info, log }) {
       ...info(),
       encoder: await pickEncoder(),
       torrents: { available: torrents?.available ?? false, error: torrents?.error },
+      subtitles: subtitles?.publicInfo() || { providers: [], languages: [], autoDownload: false },
       activeTranscodes: hls.activeJobs,
     });
   });
@@ -238,30 +263,72 @@ export function createApp({ library, artwork, torrents, info, log }) {
     }
   });
 
-  route('GET', /^\/api\/subs\/([\w]+)\/([ie]\d+)\.vtt$/, async (req, res, [, id, key]) => {
+  route('GET', /^\/api\/subs\/([\w]+)\/([ie][0-9a-f]+)\.vtt$/, async (req, res, [, id, key]) => {
     const it = library.get(id);
     if (!it) return send(res, 404, 'not found');
-    const cacheFile = path.join(library.cacheDir, 'thumbs', `${id}-${key}.vtt`);
     try {
+      if (key[0] === 'e') {
+        // External files are converted on every request, so edits and replacements show up immediately.
+        const ext = it.externalSubs?.find((s) => s.key === key);
+        if (!ext) return send(res, 404, 'not found');
+        return send(res, 200, await externalToVtt(ext.file, library.cacheDir), 'text/vtt; charset=utf-8');
+      }
+      const idx = parseInt(key.slice(1), 10);
+      if (!it.probe?.subtitles.some((s) => s.index === idx && s.text)) return send(res, 404, 'not found');
+      // Embedded tracks need a full pass over the file, so cache the result.
+      const cacheFile = path.join(library.cacheDir, 'thumbs', `${id}-${key}.vtt`);
       let vtt;
       try {
         vtt = await fsp.readFile(cacheFile, 'utf8');
       } catch {
-        if (key[0] === 'i') {
-          const idx = parseInt(key.slice(1), 10);
-          if (!it.probe?.subtitles.some((s) => s.index === idx && s.text)) return send(res, 404, 'not found');
-          vtt = await toWebVTT(it.input, idx);
-        }
-        else {
-          const ext = it.externalSubs?.[parseInt(key.slice(1), 10)];
-          if (!ext) return send(res, 404, 'not found');
-          vtt = ext.file.endsWith('.vtt') ? await fsp.readFile(ext.file, 'utf8') : await toWebVTT(ext.file);
-        }
+        vtt = await toWebVTT(it.input, idx);
         if (!it.virtualSource) fsp.writeFile(cacheFile, vtt).catch(() => {});
       }
       send(res, 200, vtt, 'text/vtt; charset=utf-8');
     } catch (e) {
       send(res, 500, e.message);
+    }
+  });
+
+  // ---------------------------------------------------------------- online subtitles
+  const subtitleError = (res) => json(res, { error: 'No subtitle provider is configured. Run `shoebox config` to add an OpenSubtitles or SubDL key.' }, 501);
+
+  route('GET', /^\/api\/subtitles\/([\w]+)\/search$/, async (req, res, [, id]) => {
+    const it = library.get(id);
+    if (!it) return json(res, { error: 'not found' }, 404);
+    if (!subtitles?.enabled) return subtitleError(res);
+    const { candidates, errors } = await subtitles.search(it);
+    json(res, {
+      candidates: candidates.slice(0, 30).map(({ provider, providerLabel, ref, release, lang, hashMatch, hi, machine, downloads, score }) => ({
+        provider, providerLabel, ref, release, lang, hashMatch, hi, machine, downloads, score,
+      })),
+      errors,
+    });
+  });
+
+  route('POST', /^\/api\/subtitles\/([\w]+)\/download$/, async (req, res, [, id]) => {
+    const it = library.get(id);
+    if (!it) return json(res, { error: 'not found' }, 404);
+    if (!subtitles?.enabled) return subtitleError(res);
+    const body = JSON.parse((await readBody(req)).toString() || '{}');
+    if (!body.provider || !body.ref) return json(res, { error: 'provider and ref are required' }, 400);
+    try {
+      const r = await subtitles.download(it, { provider: body.provider, ref: String(body.ref), lang: body.lang });
+      json(res, { ...r, subtitles: library.publicItem(it).subtitles });
+    } catch (e) {
+      json(res, { error: e.message }, e.quota ? 429 : 502);
+    }
+  });
+
+  route('POST', /^\/api\/subtitles\/([\w]+)\/auto$/, async (req, res, [, id]) => {
+    const it = library.get(id);
+    if (!it) return json(res, { error: 'not found' }, 404);
+    if (!subtitles?.enabled) return json(res, { fetched: false, reason: 'disabled', subtitles: library.publicItem(it).subtitles });
+    try {
+      const r = await subtitles.auto(it);
+      json(res, { ...r, subtitles: library.publicItem(it).subtitles });
+    } catch (e) {
+      json(res, { fetched: false, reason: e.message, subtitles: library.publicItem(it).subtitles });
     }
   });
 

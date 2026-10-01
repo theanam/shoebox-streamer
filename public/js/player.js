@@ -12,6 +12,14 @@ const QUALITIES = [
 ];
 const MODE_LABEL = { direct: 'Direct Play', remux: 'Remux', transcode: 'Transcode' };
 const isTouch = matchMedia('(hover: none)').matches;
+const langNames = new Intl.DisplayNames([navigator.language || 'en'], { type: 'language' });
+const langLabel = (code) => {
+  try {
+    return (code && langNames.of(code)) || code || 'Unknown language';
+  } catch {
+    return code || 'Unknown language';
+  }
+};
 
 export class Player {
   constructor(root, deps) {
@@ -24,6 +32,18 @@ export class Player {
     this.quality = store.getSetting('quality') || 'auto';
     this.audio = null;
     this.subKey = null;
+    this.subOffset = 0;
+    this.serverSubs = null;
+    api('/api/info')
+      .then((i) => {
+        this.serverSubs = i.subtitles;
+        if (this.item && this.session) {
+          // Info arrived after playback started: re-evaluate the pick and auto-download.
+          if (!this.subKey) this.setSubtitle(this.chooseSubtitle()?.key || null, false);
+          this.autoSubtitles();
+        }
+      })
+      .catch(() => {});
     this.drawerSeason = null;
     this.saveTimer = 0;
     this.lastSave = 0;
@@ -248,6 +268,10 @@ export class Player {
   // ---------------------------------------------------------------- loading
   async load(item) {
     if (this.item) this.saveProgress(true);
+    if (this.item?.id !== item.id) {
+      this.subKey = null;
+      this.subOffset = 0;
+    }
     this.item = item;
     this.fallbackTried = false;
     this.audio = null;
@@ -261,6 +285,7 @@ export class Player {
     const p = store.getProgress(item.id);
     const startAt = store.inProgress(item.id) ? p.t : 0;
     await this.start({ startAt, autoplay: true });
+    this.autoSubtitles();
     if (startAt > 0) {
       toast(`Resumed at ${fmtTime(startAt)}`, { action: 'Start over', onAction: () => this.seek(0) });
     }
@@ -608,15 +633,76 @@ export class Player {
     };
   }
 
-  openSubsMenu(btn) {
-    const subs = this.item.subtitles || [];
-    let out = `<h4>Subtitles</h4>` + this.opt('off', 'Off', !this.subKey);
-    out += subs.map((s) => this.opt(s.key, s.label, this.subKey === s.key, s.lang && s.lang !== s.label ? s.lang : s.key[0] === 'e' ? 'file' : '')).join('');
-    if (!subs.length) out += `<div style="padding:6px 10px;opacity:.6;font-size:13px">No text subtitles found. Put a matching .srt next to the video to add one.</div>`;
-    this.openPop(btn, out);
-    this.popHandler = (v) => {
+  openSubsMenu(btn, view = 'list') {
+    const render = () => {
+      const subs = this.item.subtitles || [];
+      const online = this.serverSubs?.providers?.length;
+      let out = `<h4>Subtitles</h4>` + this.opt('off', 'Off', !this.subKey);
+      out += subs
+        .map((s) => this.opt(s.key, s.label, this.subKey === s.key, s.external ? 'file' : 'built-in'))
+        .join('');
+      if (!subs.length) out += `<div class="pop-note">No subtitles in this video or its folder.</div>`;
+      if (online) out += html`<button data-v="search"><span class="ck">${raw(icons.search)}</span>Search online…<span class="sub">${this.serverSubs.providers.join(' + ')}</span></button>`.s;
+      else out += `<div class="pop-note">Run <code>shoebox config</code> on the computer to enable online search.</div>`;
+      if (this.subKey) {
+        const off = this.subOffset;
+        out += `<h4>Timing</h4><div class="pop-row">` +
+          html`<button data-v="delay:-0.5">−0.5s</button><span class="pop-val">${off === 0 ? 'No delay' : `Delay ${off > 0 ? '+' : ''}${off.toFixed(1)}s`}</span><button data-v="delay:0.5">+0.5s</button>`.s +
+          (off ? html`<button data-v="delay:reset">Reset</button>`.s : '') + `</div>`;
+      }
+      return out;
+    };
+    if (view === 'list') this.openPop(btn, render());
+    this.popHandler = async (v) => {
+      if (v === 'search') return this.searchOnline(btn);
+      if (v.startsWith('delay:')) {
+        const d = v.slice(6);
+        this.setSubOffset(d === 'reset' ? 0 : this.subOffset + Number(d));
+        this.pop.innerHTML = render();
+        return;
+      }
       this.setSubtitle(v === 'off' ? null : v);
       this.closePop();
+    };
+  }
+
+  async searchOnline(btn) {
+    const item = this.item;
+    this.pop.innerHTML = `<h4>Searching online…</h4><div class="pop-note"><span class="spinner" style="display:inline-block;vertical-align:middle"></span> Looking for ${esc(
+      (this.serverSubs.languages || []).map(langLabel).join(', ')
+    )} subtitles</div>`;
+    let r;
+    try {
+      r = await api(`/api/subtitles/${item.id}/search`);
+    } catch (e) {
+      this.pop.innerHTML = `<h4>Search failed</h4><div class="pop-note">${esc(e.message)}</div>`;
+      return;
+    }
+    if (this.item !== item || this.pop.hidden) return;
+    const list = r.candidates || [];
+    let out = `<h4>${list.length ? 'Pick a subtitle' : 'Nothing found'}</h4>`;
+    out += list
+      .slice(0, 15)
+      .map((c, i) =>
+        html`<button data-v="dl:${i}" class="cand"><span class="ck">${c.hashMatch ? raw(icons.check) : ''}</span><span class="cand-main"><span class="cand-name">${c.release || 'Untitled'}</span><span class="sub">${[langLabel(c.lang), c.providerLabel, c.hashMatch && 'exact match for your file', c.hi && 'SDH', c.machine && 'machine translated'].filter(Boolean).join(' · ')}</span></span></button>`.s
+      )
+      .join('');
+    if (r.errors?.length) out += `<div class="pop-note">${esc(r.errors.join(' · '))}</div>`;
+    if (!list.length && !r.errors?.length) out += `<div class="pop-note">Try adding another language with <code>shoebox config</code>.</div>`;
+    this.pop.innerHTML = out;
+    this.popHandler = async (v) => {
+      const c = list[Number(v.slice(3))];
+      if (!c) return;
+      this.pop.innerHTML = `<h4>Downloading…</h4><div class="pop-note">${esc(c.release)}</div>`;
+      try {
+        const d = await api(`/api/subtitles/${item.id}/download`, { method: 'POST', body: JSON.stringify({ provider: c.provider, ref: c.ref, lang: c.lang }) });
+        if (this.item !== item) return;
+        this.applySubtitleList(d.subtitles, d.key);
+        this.closePop();
+        toast(`Subtitles added from ${c.providerLabel}`);
+      } catch (e) {
+        this.pop.innerHTML = `<h4>Download failed</h4><div class="pop-note">${esc(e.message)}</div>`;
+      }
     };
   }
 
@@ -664,35 +750,103 @@ export class Player {
   }
 
   // ---------------------------------------------------------------- subtitles
-  attachSubtitles() {
-    const subs = this.item.subtitles || [];
-    for (const s of subs) {
+  /** Add <track> elements for subtitles that aren't attached yet. */
+  syncTracks() {
+    const have = new Set($$('track', this.video).map((t) => t.dataset.key));
+    for (const s of this.item.subtitles || []) {
+      if (have.has(s.key)) continue;
       const t = document.createElement('track');
       t.kind = 'subtitles';
       t.label = s.label;
-      if (s.lang) t.srclang = s.lang.slice(0, 3);
+      if (s.lang) t.srclang = s.lang;
       t.src = `/api/subs/${this.item.id}/${s.key}.vtt`;
       t.dataset.key = s.key;
+      t.addEventListener('load', () => this.shiftCues(t));
       this.video.appendChild(t);
     }
-    // Restore the user's preferred language (or a forced/default track) without the browser auto-picking.
-    const pref = store.getSetting('subtitleLang');
-    const keep = this.subKey && subs.find((s) => s.key === this.subKey);
-    const choice = keep || (pref ? subs.find((s) => s.lang === pref) : null) || subs.find((s) => s.forced);
+  }
+
+  attachSubtitles() {
+    this.syncTracks();
+    const choice = this.chooseSubtitle();
     setTimeout(() => this.setSubtitle(choice?.key || null, false), 0);
+  }
+
+  /**
+   * Pick a track: the language this viewer last chose, then the server's preferred languages,
+   * then any subtitle file placed next to the video, then a default or forced embedded track.
+   */
+  chooseSubtitle() {
+    const subs = this.item.subtitles || [];
+    if (!subs.length) return null;
+    const keep = this.subKey && subs.find((s) => s.key === this.subKey);
+    if (keep) return keep;
+    const forced = subs.find((s) => s.forced);
+    if (store.getSetting('subtitleMode') === 'off') return forced || null;
+    const prefs = [store.getSetting('subtitleLang'), ...(this.serverSubs?.languages || [])].filter(Boolean);
+    for (const lang of prefs) {
+      const hit = subs.find((s) => s.lang === lang && !s.forced) || subs.find((s) => s.lang === lang);
+      if (hit) return hit;
+    }
+    return subs.find((s) => s.external) || subs.find((s) => s.default) || forced || null;
+  }
+
+  /** Update the subtitle list mid-playback (after a download) and optionally select one. */
+  applySubtitleList(list, selectKey) {
+    if (!Array.isArray(list)) return;
+    this.item = { ...this.item, subtitles: list };
+    this.syncTracks();
+    if (selectKey) this.setSubtitle(selectKey);
+  }
+
+  /** Fetch subtitles automatically when nothing local matches the preferred languages. */
+  async autoSubtitles() {
+    const item = this.item;
+    const cfg = this.serverSubs;
+    if (!cfg?.autoDownload || this.autoTried === item.id) return;
+    this.autoTried = item.id;
+    if (store.getSetting('subtitleMode') === 'off') return;
+    const langs = cfg.languages || [];
+    if ((item.subtitles || []).some((s) => langs.includes(s.lang))) return;
+    try {
+      const r = await api(`/api/subtitles/${item.id}/auto`, { method: 'POST', body: '{}' });
+      if (this.item?.id !== item.id || !r.fetched) return;
+      this.applySubtitleList(r.subtitles, this.subKey ? null : r.key);
+      toast(`Downloaded ${langLabel(r.lang)} subtitles from ${r.provider}`);
+    } catch {}
   }
 
   setSubtitle(key, remember = true) {
     this.subKey = key;
-    const tracks = $$('track', this.video);
-    tracks.forEach((t) => {
+    $$('track', this.video).forEach((t) => {
       t.track.mode = t.dataset.key === key ? 'showing' : 'disabled';
+      if (t.dataset.key === key) this.shiftCues(t);
     });
     if (remember) {
       const s = (this.item.subtitles || []).find((x) => x.key === key);
-      store.setSetting('subtitleLang', s?.lang || null);
+      store.setSetting('subtitleMode', key ? 'auto' : 'off');
+      if (s?.lang) store.setSetting('subtitleLang', s.lang);
     }
     $('[data-act=cc]', this.el).style.color = key ? 'var(--accent)' : '';
+  }
+
+  setSubOffset(sec) {
+    this.subOffset = Math.round(sec * 10) / 10;
+    $$('track', this.video).forEach((t) => this.shiftCues(t));
+    this.flash(this.subOffset ? `Subtitles ${this.subOffset > 0 ? '+' : ''}${this.subOffset.toFixed(1)}s` : 'Subtitles in sync');
+  }
+
+  /** Move a track's cues so they're displaced by exactly this.subOffset. */
+  shiftCues(t) {
+    const cues = t.track?.cues;
+    if (!cues) return;
+    const delta = this.subOffset - (t._shift || 0);
+    if (!delta) return;
+    for (const cue of [...cues]) {
+      cue.startTime = Math.max(0, cue.startTime + delta);
+      cue.endTime = Math.max(0, cue.endTime + delta);
+    }
+    t._shift = this.subOffset;
   }
 
   // ---------------------------------------------------------------- rendering

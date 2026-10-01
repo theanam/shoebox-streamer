@@ -147,7 +147,10 @@ export class Artwork {
       if (!p.thumbnail?.source) return false;
       const name = normKey(p.title.replace(/\s*\([^)]*\)\s*$/, ''));
       if (similarity(name, want) < 0.8) return false;
-      return /\bfilm\b|\bmovie\b/i.test(p.extract || '') && (!year || (p.extract || '').includes(String(year)));
+      const text = p.extract || '';
+      if (!/\bfilm\b|\bmovie\b/i.test(text)) return false;
+      // An exact title is enough; a looser match must also mention the year.
+      return name === want || !year || text.includes(String(year));
     });
     if (hit) return { image: hit.thumbnail.source, overview: hit.extract };
     return null;

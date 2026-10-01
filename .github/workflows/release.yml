@@ -1,0 +1,63 @@
+name: Release
+
+# Publishes to npm whenever main has a package.json version that isn't on npm yet,
+# then tags it and creates a GitHub release from the CHANGELOG section.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the tag and GitHub release
+  id-token: write # npm provenance and trusted publishing
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing (no token) needs npm 11.5.1 or newer.
+      - run: npm install -g npm@latest
+
+      - name: Check whether this version is already published
+        id: check
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "$NAME@$VERSION is already on npm; nothing to release."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Releasing $NAME@$VERSION"
+          fi
+
+      - if: steps.check.outputs.publish == 'true'
+        run: npm ci --omit=optional
+      - if: steps.check.outputs.publish == 'true'
+        run: npm test
+      - if: steps.check.outputs.publish == 'true'
+        name: Release notes
+        run: node scripts/release-notes.mjs > "$RUNNER_TEMP/notes.md"
+
+      - if: steps.check.outputs.publish == 'true'
+        name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          # Uses the NPM_TOKEN secret when set; otherwise npm falls back to trusted publishing (OIDC).
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - if: steps.check.outputs.publish == 'true'
+        name: Tag and GitHub release
+        run: gh release create "v${{ steps.check.outputs.version }}" --target "$GITHUB_SHA" --title "v${{ steps.check.outputs.version }}" --notes-file "$RUNNER_TEMP/notes.md"
+        env:
+          GH_TOKEN: ${{ github.token }}

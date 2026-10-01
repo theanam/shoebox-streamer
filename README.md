@@ -1,110 +1,154 @@
-# 📦 Shoebox
+<p align="center">
+  <img src="https://raw.githubusercontent.com/theanam/shoebox-streamer/main/docs/logo.svg" width="112" alt="Shoebox logo" />
+</p>
 
-Turn any folder of videos into a streaming server for your home network. Run one command, then watch
-from your phone, tablet, TV browser or laptop. Built so you can watch the shows on your computer from
-a phone propped on the treadmill.
+<h1 align="center">Shoebox</h1>
+
+<p align="center">
+  <b>Stream the videos on your computer to any phone, tablet or TV on your Wi-Fi with one command.</b><br />
+  No accounts, no cloud, no setup. Run it in a folder and press play.
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/shoebox-streamer"><img src="https://img.shields.io/npm/v/shoebox-streamer?color=ff7a45" alt="npm version" /></a>
+  <a href="https://github.com/theanam/shoebox-streamer/actions/workflows/ci.yml"><img src="https://github.com/theanam/shoebox-streamer/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/node/v/shoebox-streamer" alt="Node version" />
+  <img src="https://img.shields.io/npm/l/shoebox-streamer" alt="MIT license" />
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/theanam/shoebox-streamer/main/docs/screenshots/library.jpg" alt="The Shoebox library: continue watching, shows and movies" />
+</p>
+
+## Quick start
+
+You need [Node.js](https://nodejs.org) 18 or newer.
 
 ```sh
 cd ~/Movies
 npx shoebox-streamer
 ```
 
-or install it once:
-
-```sh
-npm install -g shoebox-streamer
-shoebox
-```
-
-Then open the address it prints on any device on the same Wi-Fi (or scan the QR code in the terminal):
+Shoebox prints an address and a QR code. Open the address on any device on the same network:
 
 ```
-  📦 Shoebox v0.1.0  serving /Users/you/Movies
+  📦 Shoebox v0.2.0  serving /Users/you/Movies
 
   Network name: http://shoebox.local:7171
   On your LAN:  http://192.168.0.134:7171
 ```
 
-## What it does
-
-- **Finds your shows.** Episodes are grouped into shows and sorted by season and episode, whether they're
-  named `Show.S01E02.mkv`, `thisshows01e02.mkv`, `1x02`, `Season 1 Episode 2`, `Show/Season 1/03.mkv`
-  or anime-style `[Group] Show - 02 (1080p).mkv`. Slight spelling differences are merged.
-- **Posters and thumbnails.** Show posters come from TVMaze and movie posters from Wikipedia (no API keys).
-  Episode thumbnails are grabbed from the video itself. Pass `--tmdb-key` for TMDB artwork, or `--offline` to skip lookups.
-- **Plays on every device.** The browser reports which codecs it can decode, and the server picks one of three paths:
-  - **Direct Play**: the original file, streamed with HTTP range requests (no CPU cost)
-  - **Remux**: the video is copied untouched and only the container/audio are converted (e.g. MKV + AC3 → HLS)
-  - **Transcode**: converted on the fly to H.264/AAC HLS, using the hardware encoder when one is available (VideoToolbox, NVENC, QSV, VAAPI)
-
-  Seeking works anywhere, even into parts that haven't been converted yet. If a device claims it can play a
-  file directly and then fails, the player switches to server conversion on its own.
-- **A full-featured player.** Fullscreen, picture-in-picture, playback speed (0.5×–2×), subtitles (embedded or
-  `.srt`/`.vtt`/`.ass` next to the video), audio track and quality selection, an episode list, autoplay of the
-  next episode, double-tap to skip on phones, keyboard shortcuts, lock-screen controls, and it keeps the screen awake.
-- **Remembers where you were.** Progress is saved in each device's browser, and "Continue watching" picks up where you left off.
-- **Dark theme by default**, with a light theme one tap away.
-
-### Torrents (bonus)
+To have the `shoebox` command always available, install it globally:
 
 ```sh
-shoebox "magnet:?xt=urn:btih:..."     # or: shoebox something.torrent
+npm install -g shoebox-streamer
+shoebox            # serves the current folder
+shoebox ~/Videos   # or any folder
 ```
 
-…or open **Torrents** in the web UI and paste a magnet link or drop a `.torrent` file. Files download into
-`Torrents/` inside the served folder, and you can start watching before the download finishes.
+## Features
 
-### VLC (bonus)
+**Your folder, organized.** Shoebox recognizes episodes and groups them into shows with seasons, in the right order,
+however they're named: `Show.S01E02.mkv`, `shows01e02.mp4`, `1x02`, `Season 1/03.mkv`, `[Group] Show - 02 (1080p).mkv`.
+Movies get posters and shows get episode thumbnails. New files appear while it's running.
 
-Every video has a direct stream URL that VLC can play, whatever the format:
+**Plays on everything.** Each device tells Shoebox which formats it can decode. Files it can handle stream untouched.
+Anything else is converted on the fly (MKV, AVI, HEVC, AC3/DTS audio, 10-bit video), using your computer's
+hardware encoder when it has one. You can seek anywhere instantly, even in the middle of a conversion.
 
-- **Open in VLC** in the player's ⋯ menu, which launches the VLC app on iOS and Android
-- **VLC playlist** on a show page, an `.m3u` of every episode in order, so VLC plays them back to back
-- **Copy stream URL**, then in VLC use *Open Network Stream*
+**A player built for phones.** Big touch controls, double-tap to skip, playback speed, fullscreen and picture-in-picture,
+an episode list, autoplay of the next episode, and the screen stays awake. Each device remembers where you left off.
+There's a dark theme by default and a light one, and you can add it to your home screen as an app.
 
-## Options
+<p align="center">
+  <img src="https://raw.githubusercontent.com/theanam/shoebox-streamer/main/docs/screenshots/player.jpg" width="72%" alt="The player with the episode list open" />
+  <img src="https://raw.githubusercontent.com/theanam/shoebox-streamer/main/docs/screenshots/mobile.jpg" width="24%" alt="Shoebox on a phone" />
+</p>
 
+**Subtitles that just show up.** Subtitles inside the video or in files next to it are picked automatically in your
+language. If there aren't any, Shoebox can download them from OpenSubtitles or SubDL ([see below](#subtitles)).
+
+**Works with VLC.** Every video has a direct stream link that VLC can open, and every show has a playlist that plays
+the episodes back to back. "Open in VLC" in the player launches the VLC app on iPhone and Android.
+
+**Torrents too.** Paste a magnet link (or drop a `.torrent` file) in the web page, or pass it on the command line, and
+start watching while it downloads. Downloads are saved to a `Torrents` folder inside the folder you're serving.
+
+## Subtitles
+
+Shoebox picks a subtitle in this order:
+
+1. The language you last chose on that device, then your preferred languages
+2. Subtitle files next to the video: `Movie.en.srt`, `Movie.English.forced.srt`, `Subs/Movie/2_English.srt`, or any
+   subtitle in a folder that contains just that one video
+3. Subtitle tracks inside the video file
+
+To download missing subtitles automatically, get a free API key from one or both of these services, then run `shoebox config`:
+
+- **[OpenSubtitles](https://www.opensubtitles.com/en/consumers)**: the largest catalogue, and it finds subtitles made for your exact file.
+  The free tier allows about 20 downloads a day if you also enter your username and password.
+- **[SubDL](https://subdl.com)**: much higher free limits. Your API key is under your profile once you sign up.
+
+Downloaded subtitles are saved next to the video, so each one is only fetched once. The subtitle menu in the player
+also lets you search manually and adjust the timing if a subtitle is out of sync.
+
+## Settings
+
+```sh
+shoebox config        # step-by-step setup
+shoebox config show   # print current settings (API keys masked)
 ```
-shoebox [folder|magnet|file.torrent] [options]
 
-  -p, --port <n>       port to listen on (default 7171, next free port if taken)
-  -n, --name <name>    mDNS name, reachable as http://<name>.local (default "shoebox")
-      --host <addr>    interface to bind (default 0.0.0.0)
-      --open           open the web UI on this computer
-      --no-mdns        don't advertise via mDNS/Bonjour
-      --no-watch       don't watch the folder for new files
-      --offline        don't fetch artwork from the internet
-      --tmdb-key <k>   TMDB API key (or env TMDB_API_KEY)
-  -v, --verbose        log every ffmpeg job
+Settings are stored in `~/.shoebox.conf` (on Windows, `C:\Users\<you>\.shoebox.conf`). They include your
+preferred port, network name, subtitle languages and API keys. Command-line options override them for a single run:
+
+| Option | Default | |
+|---|---|---|
+| `-p, --port <n>` | `7171` | Port to listen on. If it's taken, the next free one is used. |
+| `-n, --name <name>` | `shoebox` | Network name: `http://<name>.local` |
+| `--open` | | Open the web page on this computer |
+| `--offline` | | Don't fetch posters or subtitles from the internet |
+| `--no-mdns` | | Don't announce the `.local` name on the network |
+| `--no-watch` | | Don't watch the folder for new files |
+| `--tmdb-key <key>` | | Use [TMDB](https://www.themoviedb.org/settings/api) for posters |
+| `-v, --verbose` | | Log every conversion |
+
+```sh
+shoebox "magnet:?xt=urn:btih:…"    # serve the current folder and download a torrent
+shoebox ~/Downloads/film.torrent   # same, from a .torrent file
 ```
-
-Environment overrides: `SHOEBOX_FFMPEG`, `SHOEBOX_FFPROBE` (binary paths) and `SHOEBOX_ENCODER` (e.g. `libx264`).
 
 ## Requirements
 
-- Node.js 18.17+
-- ffmpeg/ffprobe. A system install (`brew install ffmpeg`, `apt install ffmpeg`, `winget install ffmpeg`) is used
-  when present. Otherwise the bundled `ffmpeg-static` binaries are used.
+- **Node.js 18+** on macOS, Linux or Windows
+- **ffmpeg**. If it's installed (`brew install ffmpeg`, `sudo apt install ffmpeg`, `winget install ffmpeg`), Shoebox
+  uses it. Otherwise it falls back to a copy bundled with the package.
 
-## Good to know
+## Troubleshooting
 
-- Shoebox stores probe data, thumbnails and posters in a hidden `.shoebox/` folder inside the served folder
-  (or `~/.cache/shoebox` if that folder is read-only). Delete it to start fresh.
-- If `shoebox.local` doesn't resolve on a device (some older Android versions), use the IP address instead.
-- The first time you run it, macOS or Windows may ask whether to allow incoming connections. Allow it, or other devices can't connect.
-- Shoebox has no login. Anyone on your network can see and play the folder, so only run it on networks you trust.
-- HEVC/H.265 inside MKV is transcoded, even for devices that support HEVC (HLS remuxing is H.264-only for now).
+**Other devices can't connect.** Make sure they're on the same Wi-Fi. The first time you run Shoebox, macOS and Windows
+ask whether to allow incoming connections. Choose *Allow*. Some guest networks and office networks block
+connections between devices.
 
-## Development
+**`shoebox.local` doesn't open.** A few devices (mostly older Android phones) don't support `.local` names. Use the
+IP address instead, or scan the QR code in the terminal.
 
-```sh
-npm install
-npm start -- ~/Movies -v
-npm test
-```
+**Playback is choppy.** Pick a lower quality in the player's settings menu (720p works well on phones). If the badge in
+the top bar says *Transcode*, your computer is converting the video live, which needs more CPU.
 
-The frontend is plain ES modules in `public/` with no build step. See `PLAN.md` for the architecture.
+**Starting over.** Shoebox keeps thumbnails and file information in a hidden `.shoebox` folder inside the folder you
+serve. Delete it to rebuild everything.
 
-`uint8-util` is pinned to `2.2.6` as a direct dependency on purpose: 2.3.x changed `arr2hex` in a way that crashes
-webtorrent 2.8.x when adding a magnet link. A direct dependency (unlike `overrides`) also applies to global installs.
-Remove the pin once webtorrent is fixed upstream.
+## Privacy & security
+
+Everything stays on your network. The only outside requests are poster lookups (TVMaze, Wikipedia) and subtitle
+searches, and you can turn both off with `--offline`. There is no login, so anyone on your network can browse and play
+the folder you're serving. Use it on networks you trust.
+
+## Contributing
+
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE)
