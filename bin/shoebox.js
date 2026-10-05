@@ -231,7 +231,7 @@ if (torrentSources.length) {
   for (const src of torrentSources) {
     torrents
       .add(src)
-      .then((t) => log(`Added torrent: ${t.name}`))
+      .then((t) => log(t.duplicate ? c.yellow(`Torrent already added, skipping: ${t.name}`) : `Added torrent: ${t.name}`))
       .catch((e) => log(c.red(`Could not add torrent: ${e.message}`)));
   }
 }

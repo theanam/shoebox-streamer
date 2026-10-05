@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.2.2] - 2026-10-05
+
+### Fixed
+- Adding a torrent that's already in the list no longer shows an error. Shoebox says "Torrent already added,
+  skipping" and carries on. This works whether the duplicate is the same magnet link, a different form of it
+  (uppercase or base32 hash, bare info hash), or the matching `.torrent` file, and it covers the command line,
+  the web page and torrents resumed at startup.
+- A duplicate torrent no longer runs the existing torrent's setup a second time.
+
 ## [0.2.1] - 2026-10-02
 
 ### Changed

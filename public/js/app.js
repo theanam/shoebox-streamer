@@ -445,7 +445,7 @@ function bindTorrentPage() {
   const add = async (body, headers) => {
     try {
       const t = await api('/api/torrents', { method: 'POST', body, headers });
-      toast(`Added: ${t.name}`);
+      toast(t.duplicate ? `Torrent already added, skipping: ${t.name}` : `Added: ${t.name}`);
       refreshTorrents();
     } catch (e) {
       toast(`Could not add torrent: ${e.message}`);

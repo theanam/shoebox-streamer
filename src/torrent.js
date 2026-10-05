@@ -36,7 +36,10 @@ export class Torrents {
       const saved = JSON.parse(fs.readFileSync(this.stateFile, 'utf8'));
       for (const t of saved) {
         const src = t.magnet || (t.torrentFile && Buffer.from(t.torrentFile, 'base64'));
-        if (src) this.add(src).catch((e) => this.log(`could not resume torrent: ${e.message}`));
+        if (!src) continue;
+        this.add(src)
+          .then((t) => t.duplicate && this.log(`Torrent already added, skipping: ${t.name}`))
+          .catch((e) => this.log(`could not resume torrent: ${e.message}`));
       }
     } catch {}
   }
@@ -44,7 +47,9 @@ export class Torrents {
   persist() {
     if (!this.client) return;
     // magnetURI is only known once a torrent is parsed, so fall back to the source it was added from.
+    const seen = new Set();
     const list = this.client.torrents
+      .filter((t) => !t.destroyed && !(t.infoHash && seen.has(t.infoHash)) && (seen.add(t.infoHash), true))
       .map((t) => {
         const src = t.shoeboxSource;
         if (t.magnetURI) return { magnet: t.magnetURI };
@@ -56,28 +61,42 @@ export class Torrents {
     fs.writeFile(this.stateFile, JSON.stringify(list), () => {});
   }
 
-  /** @param {string|Buffer} source magnet URI, info hash, or .torrent contents */
-  add(source) {
-    if (!this.client) return Promise.reject(new Error(this.error || 'torrent support not initialised'));
+  /**
+   * @param {string|Buffer} source magnet URI, info hash, or .torrent contents
+   * @returns {Promise<object>} the torrent's description; `duplicate: true` when it was already added
+   */
+  async add(source) {
+    if (!this.client) throw new Error(this.error || 'torrent support not initialised');
+    // Same torrent in any form (hex/base32 magnet, bare hash, .torrent file) → report it instead of failing.
+    let existing = null;
+    try {
+      existing = await this.client.get(source);
+    } catch {}
+    if (existing) return { ...this.describe(existing), duplicate: true };
     fs.mkdirSync(this.dir, { recursive: true });
     return new Promise((resolve, reject) => {
       let settled = false;
-      const existing = typeof source === 'string' && this.client.torrents.find((t) => source.includes(t.infoHash));
-      if (existing) return resolve(this.describe(existing));
       let torrent;
       try {
         torrent = this.client.add(source, { path: this.dir }, (t) => {
-          this.onReady(t);
+          // webtorrent hands back the existing torrent when this one turns out to be a duplicate.
+          const duplicate = t !== torrent;
+          if (!duplicate) this.onReady(t); // always, even if we already answered after the 4s timeout
+          if (settled) return;
           settled = true;
-          resolve(this.describe(t));
+          resolve(duplicate ? { ...this.describe(t), duplicate: true } : this.describe(t));
         });
       } catch (e) {
         return reject(e);
       }
       torrent.shoeboxSource = source;
       torrent.on('error', (e) => {
+        if (/duplicate torrent/i.test(e.message)) return; // resolved as a duplicate above
         this.log(`torrent error: ${e.message}`);
-        if (!settled) reject(e);
+        if (!settled) {
+          settled = true;
+          reject(e);
+        }
       });
       // Magnet links can take a while to fetch metadata; report back immediately instead of blocking.
       setTimeout(() => {
