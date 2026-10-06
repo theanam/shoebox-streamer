@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.3.0] - 2026-10-07
+
+### Changed
+- Torrents now last for one session. They no longer resume automatically when Shoebox starts again. Add the same
+  magnet link or `.torrent` file again to continue from what's already downloaded.
+- Unfinished downloads stay hidden from the library until their torrent is added again and completes, so
+  half-downloaded videos don't show up as broken items.
+
+### Fixed
+- A torrent that was already complete when added (for example, added again after it finished) now shows up in the
+  library. Previously its files could stay hidden.
+
 ## [0.2.2] - 2026-10-05
 
 ### Fixed

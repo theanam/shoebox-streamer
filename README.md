@@ -32,7 +32,7 @@ npx shoebox-streamer
 Shoebox prints an address and a QR code. Open the address on any device on the same network:
 
 ```
-  📦 Shoebox v0.2.0  serving /Users/you/Movies
+  📦 Shoebox v0.3.0  serving /Users/you/Movies
 
   Network name: http://shoebox.local:7171
   On your LAN:  http://192.168.0.134:7171
@@ -73,6 +73,7 @@ the episodes back to back. "Open in VLC" in the player launches the VLC app on i
 
 **Torrents too.** Paste a magnet link (or drop a `.torrent` file) in the web page, or pass it on the command line, and
 start watching while it downloads. Downloads are saved to a `Torrents` folder inside the folder you're serving.
+Torrents last for the session: to continue an unfinished download later, add the same link again.
 
 ## Subtitles
 

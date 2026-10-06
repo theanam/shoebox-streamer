@@ -7,6 +7,10 @@ import { VIDEO_EXT, hash } from './library.js';
  * Optional torrent support via webtorrent (lazy-loaded optional dependency).
  * Files download into <root>/Torrents. While downloading, video files are exposed to the library as
  * "virtual" items that stream straight from the torrent; once done they become ordinary files.
+ *
+ * Torrents last for one session: nothing resumes on the next start. Adding the same torrent again
+ * continues from the data already on disk. Until then, unfinished files are kept out of the library
+ * (tracked in <cacheDir>/torrents.json) so half-downloaded videos don't show up as broken items.
  */
 export class Torrents {
   constructor({ library, getPort, log = () => {} }) {
@@ -18,6 +22,32 @@ export class Torrents {
     this.client = null;
     this.available = null;
     this.error = null;
+    this.unfinished = this.loadUnfinished();
+    for (const entry of Object.values(this.unfinished)) {
+      for (const rel of entry.files) this.library.excluded.add(path.join(this.library.root, rel));
+    }
+  }
+
+  /** { infoHash: { name, files: [rel paths] } } for downloads left unfinished; vanished files are dropped. */
+  loadUnfinished() {
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(this.stateFile, 'utf8'));
+    } catch {
+      return {};
+    }
+    // Older versions stored a list of torrents to resume; that format carries no file list, so it's ignored.
+    const entries = data && !Array.isArray(data) && typeof data.unfinished === 'object' ? data.unfinished : {};
+    const out = {};
+    for (const [ih, e] of Object.entries(entries)) {
+      const files = (Array.isArray(e?.files) ? e.files : []).filter((rel) => fs.existsSync(path.join(this.library.root, rel)));
+      if (files.length) out[ih] = { name: String(e.name || ih), files };
+    }
+    return out;
+  }
+
+  saveUnfinished() {
+    fs.writeFile(this.stateFile, JSON.stringify({ unfinished: this.unfinished }), () => {});
   }
 
   async init() {
@@ -31,34 +61,10 @@ export class Torrents {
       this.error = 'Torrent support unavailable (optional dependency "webtorrent" failed to load): ' + e.message;
       return;
     }
-    // Resume torrents from a previous run.
-    try {
-      const saved = JSON.parse(fs.readFileSync(this.stateFile, 'utf8'));
-      for (const t of saved) {
-        const src = t.magnet || (t.torrentFile && Buffer.from(t.torrentFile, 'base64'));
-        if (!src) continue;
-        this.add(src)
-          .then((t) => t.duplicate && this.log(`Torrent already added, skipping: ${t.name}`))
-          .catch((e) => this.log(`could not resume torrent: ${e.message}`));
-      }
-    } catch {}
-  }
-
-  persist() {
-    if (!this.client) return;
-    // magnetURI is only known once a torrent is parsed, so fall back to the source it was added from.
-    const seen = new Set();
-    const list = this.client.torrents
-      .filter((t) => !t.destroyed && !(t.infoHash && seen.has(t.infoHash)) && (seen.add(t.infoHash), true))
-      .map((t) => {
-        const src = t.shoeboxSource;
-        if (t.magnetURI) return { magnet: t.magnetURI };
-        if (typeof src === 'string') return { magnet: src };
-        if (src) return { torrentFile: Buffer.from(src).toString('base64') };
-        return null;
-      })
-      .filter(Boolean);
-    fs.writeFile(this.stateFile, JSON.stringify(list), () => {});
+    const left = Object.values(this.unfinished);
+    if (left.length) {
+      this.log(`${left.length} unfinished torrent download${left.length > 1 ? 's' : ''} hidden from the library until added again: ${left.map((e) => e.name).join(', ')}`);
+    }
   }
 
   /**
@@ -89,7 +95,6 @@ export class Torrents {
       } catch (e) {
         return reject(e);
       }
-      torrent.shoeboxSource = source;
       torrent.on('error', (e) => {
         if (/duplicate torrent/i.test(e.message)) return; // resolved as a duplicate above
         this.log(`torrent error: ${e.message}`);
@@ -105,32 +110,38 @@ export class Torrents {
           resolve(this.describe(torrent));
         }
       }, 4000);
-      this.persist();
     });
   }
 
   onReady(t) {
-    this.log(`Torrent ready: ${t.name} (${t.files.length} files)`);
-    this.persist();
+    const resumed = !!this.unfinished[t.infoHash];
+    this.log(`Torrent ready: ${t.name} (${t.files.length} files)${resumed && !t.done ? ', continuing from the data already downloaded' : ''}`);
     const videos = this.videoFiles(t);
-    for (const { file } of videos) {
-      const abs = path.join(this.dir, file.path);
-      this.library.excluded.add(abs);
-    }
-    if (!t.done) {
-      for (const { file, idx } of videos) this.library.addVirtual(this.virtualItem(t, file, idx));
-      this.probeVirtual(t);
-    }
-    t.on('done', () => {
-      this.log(`Torrent finished: ${t.name}`);
+    const finish = () => {
+      delete this.unfinished[t.infoHash];
+      this.saveUnfinished();
       for (const { file } of this.videoFiles(t)) {
         const abs = path.join(this.dir, file.path);
         this.library.excluded.delete(abs);
         this.library.removeVirtual(hash(this.rel(abs)));
       }
       this.library.scan();
+    };
+    // Already complete (e.g. re-added after it finished): 'done' won't fire, so show the files now.
+    if (t.done) return finish();
+    if (videos.length) {
+      this.unfinished[t.infoHash] = { name: t.name, files: videos.map(({ file }) => this.rel(path.join(this.dir, file.path))) };
+      this.saveUnfinished();
+    }
+    for (const { file, idx } of videos) {
+      this.library.excluded.add(path.join(this.dir, file.path));
+      this.library.addVirtual(this.virtualItem(t, file, idx));
+    }
+    this.probeVirtual(t);
+    t.once('done', () => {
+      this.log(`Torrent finished: ${t.name}`);
+      finish();
     });
-    if (t.done) this.library.scan();
   }
 
   rel(abs) {
@@ -225,12 +236,17 @@ export class Torrents {
     const files = t.files ? this.videoFiles(t) : [];
     return new Promise((resolve) => {
       this.client.remove(t, { destroyStore: deleteFiles }, () => {
+        // Kept but unfinished files stay hidden from the library until the torrent is added again.
+        const keepHidden = !deleteFiles && !t.done && !!this.unfinished[infoHash];
         for (const { file } of files) {
           const abs = path.join(this.dir, file.path);
-          this.library.excluded.delete(abs);
+          if (!keepHidden) this.library.excluded.delete(abs);
           this.library.removeVirtual(hash(this.rel(abs)));
         }
-        this.persist();
+        if (!keepHidden && this.unfinished[infoHash]) {
+          delete this.unfinished[infoHash];
+          this.saveUnfinished();
+        }
         this.library.scan();
         resolve(true);
       });
