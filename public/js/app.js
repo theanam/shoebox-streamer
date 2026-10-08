@@ -242,12 +242,13 @@ function appMenu(anchor) {
     'hr',
     {
       icon: icons.trash,
-      label: 'Clear watch history (this device)',
-      onClick: () => {
-        if (confirm('Clear all watch progress on this device?')) {
-          localStorage.removeItem('shoebox:progress');
-          location.reload();
-        }
+      label: state.info?.syncWatchtime ? 'Clear watch history (all devices)' : 'Clear watch history (this device)',
+      onClick: async () => {
+        const all = state.info?.syncWatchtime;
+        if (!confirm(all ? 'Clear watch progress on every device using this Shoebox?' : 'Clear all watch progress on this device?')) return;
+        if (all) await api('/api/progress/clear', { method: 'POST' }).catch(() => {});
+        localStorage.removeItem('shoebox:progress');
+        location.reload();
       },
     },
   ]);
@@ -550,7 +551,7 @@ function onRoute() {
   if (state.player) {
     state.player.destroy();
     state.player = null;
-    document.body.classList.remove('no-scroll');
+    unlockScroll();
   }
   if (prev?.name === 'watch' && lastViewKey) {
     // Returning from the player: re-render to refresh progress, keep scroll.
@@ -560,6 +561,23 @@ function onRoute() {
   render();
 }
 
+// iPhone Safari ignores overflow:hidden on <body>, so pin the page in place instead and restore the
+// scroll position afterwards. A page that can scroll under the player confuses touch handling there.
+let lockedScrollY = null;
+function lockScroll() {
+  if (lockedScrollY !== null) return;
+  lockedScrollY = window.scrollY;
+  document.body.classList.add('no-scroll');
+  document.body.style.top = `-${lockedScrollY}px`;
+}
+function unlockScroll() {
+  if (lockedScrollY === null) return;
+  document.body.classList.remove('no-scroll');
+  document.body.style.top = '';
+  window.scrollTo(0, lockedScrollY);
+  lockedScrollY = null;
+}
+
 function openPlayerFor(id) {
   const item = state.items.get(id);
   if (!item) {
@@ -567,7 +585,7 @@ function openPlayerFor(id) {
     location.replace('#/');
     return;
   }
-  document.body.classList.add('no-scroll');
+  lockScroll();
   if (state.player) {
     state.player.load(item);
     return;
@@ -588,6 +606,31 @@ function openPlayerFor(id) {
   state.player.load(item);
 }
 
+// ------------------------------------------------------------------ watch-time sync (--sync-watchtime)
+let pendingProgress = {};
+let pushTimer = null;
+function pushProgress(entries, now = false) {
+  Object.assign(pendingProgress, entries);
+  clearTimeout(pushTimer);
+  const send = () => {
+    const body = JSON.stringify({ entries: pendingProgress });
+    pendingProgress = {};
+    fetch('/api/progress', { method: 'POST', headers: { 'content-type': 'application/json' }, body, keepalive: true }).catch(() => {});
+  };
+  if (now) send();
+  else pushTimer = setTimeout(send, 1000);
+}
+
+async function startWatchtimeSync() {
+  try {
+    const { entries } = await api('/api/progress');
+    store.mergeProgress(entries);
+  } catch {}
+  store.onProgressChange((id, entry) => pushProgress({ [id]: entry }));
+  pushProgress(store.allProgress(), true); // share what this device watched before the session
+  window.addEventListener('pagehide', () => Object.keys(pendingProgress).length && pushProgress({}, true));
+}
+
 // ------------------------------------------------------------------ boot
 async function boot() {
   renderTopbar();
@@ -598,11 +641,27 @@ async function boot() {
     return;
   }
   renderTopbar();
-  api('/api/info').then((i) => (state.info = i)).catch(() => {});
+  // Needed before the first route: a shared watch position decides where a deep-linked video resumes.
+  try {
+    state.info = await api('/api/info');
+  } catch {}
+  if (state.info?.syncWatchtime) await startWatchtimeSync();
   window.addEventListener('hashchange', onRoute);
   onRoute();
 
   const es = new EventSource('/api/events');
+  if (state.info?.syncWatchtime) {
+    es.addEventListener('progress', (ev) => {
+      let changed = 0;
+      try {
+        changed = store.mergeProgress(JSON.parse(ev.data));
+      } catch {}
+      if (changed && state.route.name !== 'watch' && state.route.name !== 'torrents') render();
+      if (changed) state.player?.refreshData?.();
+    });
+    // After a reconnect (e.g. Shoebox restarted) the server's copy may be empty: share ours again.
+    es.addEventListener('open', () => pushProgress(store.allProgress()));
+  }
   es.onerror = () => {
     // A dropped stream after a restart may mean the session password changed; check before retrying.
     fetch('/api/auth').then((r) => r.json()).then((a) => a.required && !a.signedIn && location.reload()).catch(() => {});

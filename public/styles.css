@@ -54,6 +54,9 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 body.no-scroll {
+  position: fixed;
+  left: 0;
+  right: 0;
   overflow: hidden;
 }
 a {
@@ -794,6 +797,9 @@ code {
 .player {
   position: fixed;
   inset: 0;
+  bottom: auto; /* height/top follow the visible viewport (set in player.js) */
+  height: 100%;
+  overscroll-behavior: none;
   z-index: 50;
   background: #000;
   color: #fff;

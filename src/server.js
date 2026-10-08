@@ -156,7 +156,7 @@ function episodeLabel(lib, it) {
   return [show?.name, se, it.parsed.title].filter(Boolean).join(' - ');
 }
 
-export function createApp({ library, artwork, torrents, subtitles, info, log, auth = new Auth() }) {
+export function createApp({ library, artwork, torrents, subtitles, info, log, auth = new Auth(), syncWatchtime = false }) {
   const hls = new HlsManager({ library, log });
   const sseClients = new Set();
 
@@ -201,6 +201,7 @@ export function createApp({ library, artwork, torrents, subtitles, info, log, au
       auth: { enabled: auth.enabled, session: auth.session },
       // For players that can't sign in (VLC, native HLS): append as ?k= to media URLs.
       mediaKey: auth.mediaKey(),
+      syncWatchtime,
     });
   });
 
@@ -259,6 +260,52 @@ export function createApp({ library, artwork, torrents, subtitles, info, log, au
   route('POST', /^\/api\/stop$/, async (req, res) => {
     const body = JSON.parse((await readBody(req)).toString() || '{}');
     if (body.client) hls.stopClient(String(body.client).replace(/[^\w-]/g, ''));
+    json(res, { ok: true });
+  });
+
+  // ---------------------------------------------------------------- shared watch progress (--sync-watchtime)
+  // In memory for this session only. Each entry is { t, d, at, watched } as stored by the browsers;
+  // the newest `at` wins. t = 0 means "cleared".
+  const progress = new Map();
+  const broadcast = (event, data) => {
+    const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const r of sseClients) r.write(msg);
+  };
+
+  route('GET', /^\/api\/progress$/, (req, res) => {
+    if (!syncWatchtime) return json(res, { error: 'watch time sync is off' }, 404);
+    json(res, { entries: Object.fromEntries(progress) });
+  });
+
+  route('POST', /^\/api\/progress$/, async (req, res) => {
+    if (!syncWatchtime) return json(res, { error: 'watch time sync is off' }, 404);
+    let body;
+    try {
+      body = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString() || '{}');
+    } catch {
+      return json(res, { error: 'bad JSON' }, 400);
+    }
+    const changed = {};
+    const maxAt = Date.now() + 60_000; // tolerate small clock differences, not far-future timestamps
+    for (const [id, e] of Object.entries(body.entries || {})) {
+      if (!/^\w{1,40}$/.test(id) || !e || !Number.isFinite(e.t) || !Number.isFinite(e.at)) continue;
+      const entry = { t: Math.max(0, e.t), d: Number(e.d) || 0, at: Math.min(e.at, maxAt), watched: !!e.watched };
+      const cur = progress.get(id);
+      if (cur && cur.at >= entry.at) continue;
+      progress.set(id, entry);
+      changed[id] = entry;
+    }
+    if (Object.keys(changed).length) broadcast('progress', changed);
+    json(res, { ok: true, changed: Object.keys(changed).length });
+  });
+
+  route('POST', /^\/api\/progress\/clear$/, (req, res) => {
+    if (!syncWatchtime) return json(res, { error: 'watch time sync is off' }, 404);
+    const at = Date.now();
+    const changed = {};
+    for (const id of progress.keys()) changed[id] = { t: 0, d: 0, at, watched: false };
+    for (const [id, e] of Object.entries(changed)) progress.set(id, e);
+    broadcast('progress', changed);
     json(res, { ok: true });
   });
 

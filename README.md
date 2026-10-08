@@ -32,7 +32,7 @@ npx shoebox-streamer
 Shoebox prints an address and a QR code. Open the address on any device on the same network:
 
 ```
-  📦 Shoebox v0.4.0  serving /Users/you/Movies
+  📦 Shoebox v0.5.0  serving /Users/you/Movies
 
   Network name: http://shoebox.local:7171
   On your LAN:  http://192.168.0.134:7171
@@ -58,7 +58,8 @@ hardware encoder when it has one. You can seek anywhere instantly, even in the m
 
 **A player built for phones.** Big touch controls, double-tap to skip, playback speed, fullscreen and picture-in-picture,
 an episode list, autoplay of the next episode, and the screen stays awake. Each device remembers where you left off.
-There's a dark theme by default and a light one, and you can add it to your home screen as an app.
+There's a dark theme by default and a light one, and you can add it to your home screen as an app. Start Shoebox with
+`--sync-watchtime` to pick up on one device where you stopped on another.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/theanam/shoebox-streamer/main/docs/screenshots/player.jpg" width="72%" alt="The Shoebox player" />
@@ -107,6 +108,7 @@ preferred port, network name, subtitle languages and API keys. Command-line opti
 |---|---|---|
 | `-p, --port <n>` | `7171` | Port to listen on. If it's taken, the next free one is used. |
 | `-n, --name <name>` | `shoebox` | Network name: `http://<name>.local` |
+| `--sync-watchtime` | | Share watch progress between devices for this run. Start a movie on your phone and finish it on your computer. |
 | `--password` | | Ask for a password for this run. Devices must enter it to open Shoebox. |
 | `--no-password` | | Turn off the password from your settings for this run |
 | `--open` | | Open the web page on this computer |

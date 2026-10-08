@@ -1,6 +1,6 @@
 {
   "name": "shoebox-streamer",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Stream your local videos or torrents to any device on your network.",
   "type": "module",
   "bin": {

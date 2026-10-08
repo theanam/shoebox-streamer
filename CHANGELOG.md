@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.5.0] - 2026-10-09
+
+### Added
+- `--sync-watchtime`: share watch progress between all devices for one session, so you can start a movie on your
+  phone and pick it up on your computer. Devices bring their earlier history with them when they connect, the most
+  recent position wins, and the home screen updates live. "Clear watch history" then clears every device.
+
+### Fixed
+- iPhone: after a long pause (for example with the screen locked), a video could resume earlier or later than
+  where it was paused, and save that wrong position. The player now ignores position jumps nobody made, puts
+  the video back where it was paused, and only saves positions reached by playing or by your own seeking.
+- iPhone: the player's controls could stop responding in landscape until the phone was turned back to portrait.
+  The page behind the player is now properly locked, and the player is re-fitted to the screen whenever Safari's
+  toolbars or the orientation change.
+
+### Development
+- The repo includes a Peacock colour (`.vscode/settings.json`) so its VS Code window is easy to spot.
+
 ## [0.4.0] - 2026-10-09
 
 ### Added

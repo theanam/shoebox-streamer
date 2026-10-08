@@ -139,11 +139,28 @@ export class Player {
       }
     });
 
-    on(v, 'play', () => this.syncPlayState());
+    on(v, 'play', () => {
+      this.restoreAfterPause();
+      this.anchorTime();
+      this.syncPlayState();
+    });
     on(v, 'pause', () => {
+      this.trackTime();
+      if (!v.ended) this.pausedAt = { t: this.goodTime(), seekAt: this.userSeekAt };
+      this.anchorTime();
       this.syncPlayState();
       this.saveProgress(true);
     });
+    on(v, 'waiting', () => this.anchorTime());
+    // Seeks made in the iPhone's native fullscreen player or picture-in-picture are the viewer's own.
+    on(v, 'seeking', () => {
+      if (v.webkitDisplayingFullscreen || v.webkitPresentationMode === 'picture-in-picture' || document.pictureInPictureElement === v) this.markUserSeek();
+    });
+    // Safari can drop and reload a paused video's media (long pauses, locked phone). Go back to where we were.
+    on(v, 'emptied', () => {
+      if (!this.switchingSource && this.good) this.pendingStart = this.good.t;
+    });
+    on(v, 'webkitendfullscreen', () => this.fitToViewport(true));
     on(v, 'playing', () => {
       this.el.classList.remove('loading');
       this.syncPlayState();
@@ -161,7 +178,10 @@ export class Player {
       store.setSetting('muted', v.muted);
       this.updateVolumeIcon();
     });
-    on(v, 'ended', () => this.onEnded());
+    on(v, 'ended', () => {
+      this.pausedAt = null;
+      this.onEnded();
+    });
     on(v, 'loadedmetadata', () => this.onMetadata());
     on(v, 'error', () => this.onVideoError());
 
@@ -240,9 +260,22 @@ export class Player {
     on(document, 'fullscreenchange', () => this.syncFullscreen());
     on(document, 'webkitfullscreenchange', () => this.syncFullscreen());
     on(document, 'visibilitychange', () => {
-      if (document.visibilityState === 'visible') this.requestWakeLock();
-      else this.saveProgress(true);
+      if (document.visibilityState === 'visible') {
+        this.requestWakeLock();
+        this.fitToViewport(true);
+      } else this.saveProgress(true);
     });
+    // Keep the player exactly the size of the visible screen. On iPhone, Safari's toolbars change size
+    // after rotating or returning to the tab, and a stale layout leaves the controls' touch areas offset.
+    const fit = () => this.fitToViewport();
+    on(window, 'resize', fit);
+    on(window, 'orientationchange', () => setTimeout(() => this.fitToViewport(true), 300));
+    on(window, 'pageshow', () => this.fitToViewport(true));
+    if (window.visualViewport) {
+      on(window.visualViewport, 'resize', fit);
+      on(window.visualViewport, 'scroll', fit);
+    }
+    this.fitToViewport();
     on(window, 'pagehide', () => this.saveProgress(true));
 
     on(this.drawer, 'click', (e) => {
@@ -314,11 +347,16 @@ export class Player {
     this.session = res;
     if (this.audio == null) this.audio = res.audio;
     this.renderBadge();
+    this.switchingSource = true;
     this.teardownSource();
     this.attachSubtitles();
     const v = this.video;
     v.playbackRate = store.getSetting('speed') || 1;
     this.pendingStart = startAt;
+    this.good = startAt > 0 ? { t: startAt, at: performance.now() } : null;
+    this.suspect = null;
+    this.pausedAt = null;
+    this.markUserSeek();
 
     // iPhone has only ManagedMediaSource; its native HLS player is the more reliable choice there.
     const useHlsJs = res.mode !== 'direct' && window.Hls && Hls.isSupported() && (!!window.MediaSource || !capabilities().hlsNative);
@@ -348,6 +386,7 @@ export class Player {
       this.pendingStart = 0; // hls.js handles startPosition itself
     }
     this.renderScrub();
+    setTimeout(() => (this.switchingSource = false), 0);
     if (autoplay) {
       try {
         await v.play();
@@ -372,6 +411,7 @@ export class Player {
   onMetadata() {
     const v = this.video;
     if (this.pendingStart) {
+      this.markUserSeek();
       v.currentTime = this.pendingStart;
       this.pendingStart = 0;
     }
@@ -476,6 +516,7 @@ export class Player {
   seek(t) {
     const v = this.video;
     t = Math.max(0, Math.min(t, this.duration() - 0.5));
+    this.markUserSeek();
     if (v.readyState === 0) this.pendingStart = t;
     else v.currentTime = t;
     this.renderScrub(t);
@@ -919,6 +960,7 @@ export class Player {
 
   onTime() {
     if (!this.dragging) this.renderScrub();
+    this.trackTime();
     this.saveProgress();
     const s = this.siblings();
     const d = this.duration();
@@ -936,11 +978,72 @@ export class Player {
     }
   }
 
+  // ---------------------------------------------------------------- position tracking
+  // iPhone Safari can move a paused video's position on its own (e.g. after a long pause or a locked
+  // phone). We keep a "good" position that only advances through normal playback or the viewer's own
+  // seeks, save that, and put the video back if it moved while paused.
+
+  markUserSeek() {
+    this.userSeekAt = performance.now();
+  }
+
+  /** Re-anchor the playback clock (call whenever playback starts, stops or stalls). */
+  anchorTime() {
+    if (this.good) this.good.at = performance.now();
+  }
+
+  goodTime() {
+    return this.good ? this.good.t : this.video.currentTime;
+  }
+
+  trackTime() {
+    const v = this.video;
+    const t = v.currentTime;
+    const now = performance.now();
+    if (!this.good || now - (this.userSeekAt || 0) < 4000) {
+      this.good = { t, at: now };
+      this.suspect = null;
+      return;
+    }
+    const expected = v.paused ? 0 : ((now - this.good.at) / 1000) * (v.playbackRate || 1);
+    const delta = t - this.good.t;
+    if (delta >= -2.5 && delta <= expected + 2.5) {
+      this.good = { t, at: now };
+      this.suspect = null;
+      return;
+    }
+    // Unexplained jump. If the viewer keeps watching from there for a while, accept it.
+    const s = this.suspect;
+    const consistent = s && Math.abs(t - s.t - ((now - s.at) / 1000) * (v.playbackRate || 1)) < 2.5;
+    if (!consistent) {
+      this.suspect = { t, at: now };
+      console.info(`[shoebox] ignoring unexpected jump ${this.good.t.toFixed(1)}s → ${t.toFixed(1)}s`);
+    } else if (now - s.at > 8000 && !v.paused) {
+      this.good = { t, at: now };
+      this.suspect = null;
+    }
+  }
+
+  /** On resume: if the video moved while paused and nobody seeked, put it back. */
+  restoreAfterPause() {
+    const p = this.pausedAt;
+    this.pausedAt = null;
+    const v = this.video;
+    if (!p || (this.userSeekAt || 0) !== (p.seekAt || 0)) return;
+    if (Math.abs(v.currentTime - p.t) > 2) {
+      console.info(`[shoebox] video moved from ${p.t.toFixed(1)}s to ${v.currentTime.toFixed(1)}s while paused; restoring`);
+      this.markUserSeek();
+      if (v.readyState === 0) this.pendingStart = p.t;
+      else v.currentTime = p.t;
+      this.good = { t: p.t, at: performance.now() };
+    }
+  }
+
   saveProgress(force = false) {
     if (!this.item) return;
     const now = Date.now();
     if (!force && now - this.lastSave < 5000) return;
-    const t = this.video.currentTime;
+    const t = this.goodTime();
     if (!t || t < 1) return;
     this.lastSave = now;
     store.setProgress(this.item.id, t, this.duration());
@@ -956,6 +1059,16 @@ export class Player {
   hideChrome() {
     if (this.video.paused || !this.pop.hidden || this.dragging || (this.drawerOpen && innerWidth < 760)) return;
     this.el.classList.add('idle');
+  }
+
+  fitToViewport(wake = false) {
+    const vv = window.visualViewport;
+    const h = Math.round(vv ? vv.height : window.innerHeight);
+    const top = Math.round(vv ? vv.offsetTop : 0);
+    this.el.style.height = `${h}px`;
+    this.el.style.top = `${top}px`;
+    if (window.scrollY) window.scrollTo(0, 0);
+    if (wake) this.wake();
   }
 
   // ---------------------------------------------------------------- fullscreen / pip

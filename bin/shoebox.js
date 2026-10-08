@@ -26,6 +26,7 @@ Options (override the settings file for this run):
       --host <addr>    interface to bind (default 0.0.0.0, all interfaces)
       --password       ask for a password for this run; devices must enter it to open Shoebox
       --no-password    turn off the password from your settings for this run
+      --sync-watchtime share watch progress between all devices for this session
       --open           open the web UI in this computer's browser
       --no-mdns        don't advertise on the local network via mDNS/Bonjour
       --no-watch       don't watch the folder for new files
@@ -45,6 +46,7 @@ try {
       name: { type: 'string', short: 'n' },
       host: { type: 'string', default: '0.0.0.0' },
       open: { type: 'boolean', default: false },
+      'sync-watchtime': { type: 'boolean', default: false },
       password: { type: 'boolean', default: false },
       'no-password': { type: 'boolean', default: false },
       'no-mdns': { type: 'boolean', default: false },
@@ -193,7 +195,7 @@ const info = () => ({
 });
 
 const subtitles = new SubtitleService({ config, library, offline: !!opts.offline, log });
-const app = createApp({ library, artwork, torrents, subtitles, info, log, auth });
+const app = createApp({ library, artwork, torrents, subtitles, info, log, auth, syncWatchtime: opts['sync-watchtime'] });
 
 function listen(p, attempts = 20) {
   return new Promise((resolve, reject) => {
@@ -229,6 +231,7 @@ console.log();
 if (mdns) console.log(`  ${c.b('Network name:')} ${c.green(primary)}`);
 for (const u of urls) console.log(`  ${c.b('On your LAN:')}  ${c.green(u)}`);
 console.log(`  ${c.b('This computer:')} http://localhost:${port}`);
+if (opts['sync-watchtime']) console.log(`  ${c.b('Watch time:')}   ${c.yellow('shared between devices for this session')}`);
 if (auth.enabled) console.log(`  ${c.b('Password:')}     ${c.yellow(auth.session ? 'on, for this session only' : 'on (from your settings)')}`);
 console.log();
 try {
