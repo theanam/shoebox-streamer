@@ -5,19 +5,19 @@
 <h1 align="center">Shoebox</h1>
 
 <p align="center">
-  <b>Stream the videos on your computer to any phone, tablet or TV on your Wi-Fi with one command.</b><br />
-  No accounts, no cloud, no setup. Run it in a folder and press play.
+  <b>Stream your local videos and torrents to any phone, tablet or TV on your Wi-Fi with one command.</b><br />
+  Run it in a folder of videos, or give it a magnet link, and press play. No accounts, no cloud, no setup.
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/shoebox-streamer"><img src="https://img.shields.io/npm/v/shoebox-streamer?color=ff7a45" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/shoebox-streamer"><img src="https://img.shields.io/npm/v/shoebox-streamer?color=ef3b3b" alt="npm version" /></a>
   <a href="https://github.com/theanam/shoebox-streamer/actions/workflows/ci.yml"><img src="https://github.com/theanam/shoebox-streamer/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/node/v/shoebox-streamer" alt="Node version" />
   <img src="https://img.shields.io/npm/l/shoebox-streamer" alt="MIT license" />
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/theanam/shoebox-streamer/main/docs/screenshots/library.jpg" alt="The Shoebox library: continue watching, shows and movies" />
+  <img src="https://raw.githubusercontent.com/theanam/shoebox-streamer/main/docs/screenshots/library.jpg" alt="The Shoebox library: continue watching and movies with cover art" />
 </p>
 
 ## Quick start
@@ -32,7 +32,7 @@ npx shoebox-streamer
 Shoebox prints an address and a QR code. Open the address on any device on the same network:
 
 ```
-  📦 Shoebox v0.3.0  serving /Users/you/Movies
+  📦 Shoebox v0.4.0  serving /Users/you/Movies
 
   Network name: http://shoebox.local:7171
   On your LAN:  http://192.168.0.134:7171
@@ -61,7 +61,7 @@ an episode list, autoplay of the next episode, and the screen stays awake. Each 
 There's a dark theme by default and a light one, and you can add it to your home screen as an app.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/theanam/shoebox-streamer/main/docs/screenshots/player.jpg" width="72%" alt="The player with the episode list open" />
+  <img src="https://raw.githubusercontent.com/theanam/shoebox-streamer/main/docs/screenshots/player.jpg" width="72%" alt="The Shoebox player" />
   <img src="https://raw.githubusercontent.com/theanam/shoebox-streamer/main/docs/screenshots/mobile.jpg" width="24%" alt="Shoebox on a phone" />
 </p>
 
@@ -107,6 +107,8 @@ preferred port, network name, subtitle languages and API keys. Command-line opti
 |---|---|---|
 | `-p, --port <n>` | `7171` | Port to listen on. If it's taken, the next free one is used. |
 | `-n, --name <name>` | `shoebox` | Network name: `http://<name>.local` |
+| `--password` | | Ask for a password for this run. Devices must enter it to open Shoebox. |
+| `--no-password` | | Turn off the password from your settings for this run |
 | `--open` | | Open the web page on this computer |
 | `--offline` | | Don't fetch posters or subtitles from the internet |
 | `--no-mdns` | | Don't announce the `.local` name on the network |
@@ -118,6 +120,18 @@ preferred port, network name, subtitle languages and API keys. Command-line opti
 shoebox "magnet:?xt=urn:btih:…"    # serve the current folder and download a torrent
 shoebox ~/Downloads/film.torrent   # same, from a .torrent file
 ```
+
+## Password protection
+
+Without a password, anyone on your network can open Shoebox. You can require one in two ways:
+
+- **Always:** run `shoebox config` and set a web page password. It's saved as a hash, not in plain text, and devices
+  stay signed in for 30 days or until you change the password.
+- **For one run:** start with `shoebox --password` and type a password in the terminal. It overrides the saved password
+  for that run, and every device is signed out when Shoebox stops.
+
+Devices see a sign-in page until they enter the password. Links for VLC and other players include a key, so they
+keep working without signing in. After five wrong guesses, Shoebox makes that device wait before trying again.
 
 ## Requirements
 
@@ -143,8 +157,9 @@ serve. Delete it to rebuild everything.
 ## Privacy & security
 
 Everything stays on your network. The only outside requests are poster lookups (TVMaze, Wikipedia) and subtitle
-searches, and you can turn both off with `--offline`. There is no login, so anyone on your network can browse and play
-the folder you're serving. Use it on networks you trust.
+searches, and you can turn both off with `--offline`. Unless you [set a password](#password-protection), anyone on your
+network can browse and play the folder you're serving. The password keeps out other people on your network. The
+connection itself is plain HTTP, though, so use Shoebox on networks you trust.
 
 ## Contributing
 

@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.4.0] - 2026-10-09
+
+### Added
+- Password protection. Set a password with `shoebox config` (stored as a hash; devices stay signed in for 30 days),
+  or start with `shoebox --password` to set one for that run only. `--no-password` turns a saved password off
+  for one run. Devices that aren't signed in see a sign-in page, links for VLC carry a key so they keep
+  working, and repeated wrong guesses are slowed down. Without a password, nothing changes.
+- "Sign out" in the menu when a password is set.
+
+### Changed
+- New, simpler red logo, and a red colour scheme to match.
+- Poster lookups identify Shoebox to Wikipedia as its API policy asks, which avoids being rate-limited.
+
+### Fixed
+- A movie could get the poster of a different film with the same title (for example "Hero" from 2018 matching
+  the 2002 film). A year mismatch now rules the match out.
+
 ## [0.3.0] - 2026-10-07
 
 ### Changed

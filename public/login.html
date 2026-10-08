@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e0c0d" />
+    <title>Shoebox · Sign in</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script>
+      try {
+        const s = JSON.parse(localStorage.getItem('shoebox:settings') || '{}');
+        if (s.theme) document.documentElement.dataset.theme = s.theme;
+      } catch {}
+    </script>
+    <style>
+      :root,
+      [data-theme='dark'] {
+        --bg: #0e0c0d;
+        --surface: #1a1617;
+        --border: #342b2d;
+        --text: #f4eff0;
+        --text-2: #b3a8aa;
+        --accent: #ef3b3b;
+        --accent-2: #ff5a55;
+        --accent-ink: #ffffff;
+        --danger: #ff7b72;
+        color-scheme: dark;
+      }
+      [data-theme='light'] {
+        --bg: #faf7f7;
+        --surface: #ffffff;
+        --border: #e8dfe0;
+        --text: #1b1415;
+        --text-2: #6b5d60;
+        --accent: #d92b2b;
+        --accent-2: #ef3b3b;
+        --accent-ink: #ffffff;
+        --danger: #c62828;
+        color-scheme: light;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      body {
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        min-height: 100dvh;
+        padding: 24px 16px;
+      }
+      main {
+        width: min(360px, 100%);
+        text-align: center;
+      }
+      img {
+        width: 72px;
+        height: 72px;
+      }
+      h1 {
+        margin: 16px 0 4px;
+        font-size: 24px;
+        letter-spacing: -0.01em;
+      }
+      p {
+        margin: 0 0 24px;
+        color: var(--text-2);
+      }
+      form {
+        display: grid;
+        gap: 12px;
+      }
+      input {
+        width: 100%;
+        padding: 14px 16px;
+        font: inherit;
+        font-size: 17px;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        outline: none;
+      }
+      input:focus {
+        border-color: var(--accent);
+      }
+      button {
+        padding: 14px 16px;
+        font: inherit;
+        font-weight: 650;
+        color: var(--accent-ink);
+        background: var(--accent);
+        border: 0;
+        border-radius: 12px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--accent-2);
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      .error {
+        min-height: 1.45em;
+        margin: 0;
+        color: var(--danger);
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/icon.svg" alt="" />
+      <h1>Shoebox</h1>
+      <p>This library is password protected.</p>
+      <form id="f">
+        <input id="pw" type="password" autocomplete="current-password" placeholder="Password" autofocus required />
+        <button id="go" type="submit">Sign in</button>
+        <p class="error" id="err" role="alert"></p>
+      </form>
+    </main>
+    <script>
+      const f = document.getElementById('f');
+      const pw = document.getElementById('pw');
+      const go = document.getElementById('go');
+      const err = document.getElementById('err');
+      f.onsubmit = async (e) => {
+        e.preventDefault();
+        go.disabled = true;
+        err.textContent = '';
+        try {
+          const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ password: pw.value }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (res.ok && body.ok) return location.reload();
+          err.textContent = body.error || 'Sign-in failed';
+          pw.select();
+          if (body.retryAfter) setTimeout(() => (go.disabled = false), body.retryAfter * 1000);
+          else go.disabled = false;
+        } catch {
+          err.textContent = "Can't reach Shoebox. Is it still running?";
+          go.disabled = false;
+        }
+      };
+    </script>
+  </body>
+</html>

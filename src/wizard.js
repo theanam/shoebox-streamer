@@ -4,6 +4,7 @@ import readline from 'node:readline';
 import { loadConfig, saveConfig, mask, redacted, CONFIG_PATH, DEFAULTS } from './config.js';
 import { OpenSubtitles, SubDL } from './subtitles.js';
 import { toIso1, languageName } from './lang.js';
+import { hashPassword } from './auth.js';
 
 const tty = process.stdout.isTTY && !process.env.NO_COLOR;
 const c = {
@@ -137,6 +138,14 @@ export async function runWizard() {
     cfg.name = (await text(p, 'Network name', DEFAULTS.name)) || DEFAULTS.name;
   }
   cfg.mdns = await yesNo(p, `Announce as ${cfg.name}.local on the network`, cfg.mdns);
+  console.log(c.dim('    Devices must enter this password before they can browse or play anything. Leave it empty for no password.'));
+  const pw = await p.ask(`  Web page password [${cfg.password ? 'set: Enter keeps it, - removes it' : c.dim('none')}]: `, { secret: true });
+  if (pw === '-') cfg.password = '';
+  else if (pw) {
+    const again = await p.ask('  Repeat the password: ', { secret: true });
+    if (again === pw) cfg.password = hashPassword(pw);
+    else console.log(c.red(`    The passwords didn't match, so the password ${cfg.password ? 'is unchanged' : 'is still not set'}.`));
+  }
   cfg.watch = await yesNo(p, 'Watch the folder for new videos', cfg.watch);
 
   section('Artwork');
@@ -201,6 +210,25 @@ export async function runWizard() {
   }
   saveConfig(cfg);
   console.log(c.green(`\n  Saved. Run ${c.b('shoebox')} in a folder of videos to start.\n`));
+}
+
+/** Ask for a new password twice with hidden input (used by `shoebox --password`). Returns '' if cancelled. */
+export async function askNewPassword(label = 'Password') {
+  if (!process.stdin.isTTY) throw new Error('--password needs an interactive terminal to ask for the password');
+  const p = new Prompter();
+  try {
+    for (;;) {
+      const pw = await p.ask(`  ${label}: `, { secret: true });
+      if (!pw) {
+        console.log(c.red('    The password cannot be empty.'));
+        continue;
+      }
+      if ((await p.ask('  Repeat it: ', { secret: true })) === pw) return pw;
+      console.log(c.red("    The passwords didn't match. Try again."));
+    }
+  } finally {
+    p.close();
+  }
 }
 
 export function showConfig() {

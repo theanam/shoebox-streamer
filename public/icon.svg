@@ -1,13 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="box" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#ffa04d"/>
-      <stop offset="1" stop-color="#ff4d3a"/>
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="15" fill="#14161d"/>
-  <path d="M10 28h44v18.5a6.5 6.5 0 0 1-6.5 6.5h-31A6.5 6.5 0 0 1 10 46.5z" fill="url(#box)"/>
-  <path d="M10 28 3.5 19.5h22L31 28zM54 28l6.5-8.5h-22L33 28z" fill="#ffb47d"/>
-  <path d="M27 33.5v14l12-7z" fill="#14161d"/>
-  <path d="M25.6 15.2a9.2 9.2 0 0 1 12.8 0M20.8 10.2a16 16 0 0 1 22.4 0" stroke="#ff8f4c" stroke-width="3.6" stroke-linecap="round" fill="none"/>
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4443e"/><stop offset="1" stop-color="#d7262b"/></linearGradient></defs>
+  <rect width="64" height="64" rx="15" fill="url(#g)"/>
+  <rect x="13" y="25" width="38" height="26" rx="5" fill="#fff"/>
+  <rect x="10" y="17" width="44" height="9" rx="3" fill="#fff"/>
+  <path d="M28 31.5v13l11-6.5z" fill="#e0312f"/>
 </svg>

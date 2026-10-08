@@ -24,6 +24,8 @@ Options (override the settings file for this run):
   -p, --port <n>       port to listen on (default 7171, next free port if taken)
   -n, --name <name>    mDNS name, reachable as http://<name>.local (default "shoebox")
       --host <addr>    interface to bind (default 0.0.0.0, all interfaces)
+      --password       ask for a password for this run; devices must enter it to open Shoebox
+      --no-password    turn off the password from your settings for this run
       --open           open the web UI in this computer's browser
       --no-mdns        don't advertise on the local network via mDNS/Bonjour
       --no-watch       don't watch the folder for new files
@@ -43,6 +45,8 @@ try {
       name: { type: 'string', short: 'n' },
       host: { type: 'string', default: '0.0.0.0' },
       open: { type: 'boolean', default: false },
+      password: { type: 'boolean', default: false },
+      'no-password': { type: 'boolean', default: false },
       'no-mdns': { type: 'boolean', default: false },
       'no-watch': { type: 'boolean', default: false },
       offline: { type: 'boolean', default: false },
@@ -88,6 +92,28 @@ if (opts.name) config.name = opts.name;
 if (opts['no-mdns']) config.mdns = false;
 if (opts['no-watch']) config.watch = false;
 if (opts.offline) config.artwork = false;
+if (opts.password && opts['no-password']) {
+  console.error('Use either --password or --no-password, not both.');
+  process.exit(1);
+}
+// Password: --password asks for one for this run only; otherwise the one from settings (if any).
+const { Auth, hashPassword, isPasswordHash } = await import('../src/auth.js');
+let auth = new Auth();
+if (opts.password) {
+  const { askNewPassword } = await import('../src/wizard.js');
+  let pw;
+  try {
+    pw = await askNewPassword('Password for this session');
+  } catch (e) {
+    console.error(e.message);
+    process.exit(1);
+  }
+  auth = new Auth({ passwordHash: hashPassword(pw), session: true });
+} else if (config.password && !opts['no-password']) {
+  // A password typed into the file by hand works too, but is hashed in memory only.
+  auth = new Auth({ passwordHash: isPasswordHash(config.password) ? config.password : hashPassword(config.password) });
+  if (!isPasswordHash(config.password)) console.error('Note: the password in your settings file is in plain text. Run `shoebox config` to store it hashed.');
+}
 if (opts['tmdb-key']) config.tmdbKey = opts['tmdb-key'];
 else if (process.env.TMDB_API_KEY) config.tmdbKey = process.env.TMDB_API_KEY;
 
@@ -167,7 +193,7 @@ const info = () => ({
 });
 
 const subtitles = new SubtitleService({ config, library, offline: !!opts.offline, log });
-const app = createApp({ library, artwork, torrents, subtitles, info, log });
+const app = createApp({ library, artwork, torrents, subtitles, info, log, auth });
 
 function listen(p, attempts = 20) {
   return new Promise((resolve, reject) => {
@@ -203,6 +229,7 @@ console.log();
 if (mdns) console.log(`  ${c.b('Network name:')} ${c.green(primary)}`);
 for (const u of urls) console.log(`  ${c.b('On your LAN:')}  ${c.green(u)}`);
 console.log(`  ${c.b('This computer:')} http://localhost:${port}`);
+if (auth.enabled) console.log(`  ${c.b('Password:')}     ${c.yellow(auth.session ? 'on, for this session only' : 'on (from your settings)')}`);
 console.log();
 try {
   const qr = require('qrcode-terminal');

@@ -3,8 +3,8 @@
   "short_name": "Shoebox",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0b0d12",
-  "theme_color": "#0b0d12",
+  "background_color": "#0e0c0d",
+  "theme_color": "#0e0c0d",
   "icons": [
     {
       "src": "/icon.svg",

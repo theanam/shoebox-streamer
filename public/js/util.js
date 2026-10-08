@@ -80,6 +80,11 @@ export async function api(url, opts = {}) {
     ...opts,
     headers: opts.body && typeof opts.body === 'string' ? { 'content-type': 'application/json', ...(opts.headers || {}) } : opts.headers,
   });
+  // Signed out (session ended or password changed): reloading shows the sign-in page.
+  if (res.status === 401 && !url.startsWith('/api/login')) {
+    location.reload();
+    throw new Error('Sign-in required');
+  }
   const ct = res.headers.get('content-type') || '';
   const body = ct.includes('json') ? await res.json() : await res.text();
   if (!res.ok) throw new Error(body?.error || body || res.statusText);

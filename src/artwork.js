@@ -2,19 +2,24 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
 import { normKey, similarity } from './parse.js';
+
+// Wikimedia asks API clients to identify themselves with a name and a contact URL.
+const { version } = createRequire(import.meta.url)('../package.json');
+const USER_AGENT = `Shoebox/${version} (https://github.com/theanam/shoebox-streamer)`;
 
 const hash = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 16);
 
 async function getJSON(url) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000), headers: { 'user-agent': 'shoebox-streamer' } });
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000), headers: { 'user-agent': USER_AGENT } });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
 async function download(url, file) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  const res = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { 'user-agent': USER_AGENT } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   await fsp.writeFile(file, Buffer.from(await res.arrayBuffer()));
 }
@@ -149,8 +154,12 @@ export class Artwork {
       if (similarity(name, want) < 0.8) return false;
       const text = p.extract || '';
       if (!/\bfilm\b|\bmovie\b/i.test(text)) return false;
-      // An exact title is enough; a looser match must also mention the year.
-      return name === want || !year || text.includes(String(year));
+      if (!year) return true;
+      // Matching year (±1 for festival vs. release dates) wins. With no year in the summary, only an
+      // exact title is trusted; a summary naming a different year is another film ("Hero" 2002 vs 2018).
+      const years = (text.match(/\b(?:19|20)\d\d\b/g) || []).map(Number);
+      if (years.some((y) => Math.abs(y - year) <= 1)) return true;
+      return !years.length && name === want;
     });
     if (hit) return { image: hit.thumbnail.source, overview: hit.extract };
     return null;

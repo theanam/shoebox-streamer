@@ -10,6 +10,8 @@ export const CONFIG_PATH = process.env.SHOEBOX_CONFIG || path.join(os.homedir(),
 export const DEFAULTS = Object.freeze({
   port: 7171,
   name: 'shoebox',
+  // scrypt hash of the web page password; empty = no password
+  password: '',
   mdns: true,
   watch: true,
   artwork: true,
@@ -78,6 +80,7 @@ export function mask(secret) {
 /** Config with secrets masked, for display. */
 export function redacted(config) {
   const c = clone(config);
+  c.password = c.password ? '(set)' : '';
   c.tmdbKey = mask(c.tmdbKey);
   c.subtitles.openSubtitles.apiKey = mask(c.subtitles.openSubtitles.apiKey);
   c.subtitles.openSubtitles.password = mask(c.subtitles.openSubtitles.password);

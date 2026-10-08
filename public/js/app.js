@@ -33,7 +33,9 @@ export function streamBase() {
 }
 
 export function externalLinks(item) {
-  const url = `${streamBase()}/media/${item.id}/${encodeURIComponent(item.rel.split('/').pop())}`;
+  let url = `${streamBase()}/media/${item.id}/${encodeURIComponent(item.rel.split('/').pop())}`;
+  // VLC can't sign in, so password-protected links carry a media key.
+  if (state.info?.mediaKey) url += `?k=${encodeURIComponent(state.info.mediaKey)}`;
   const ua = navigator.userAgent;
   const vlc = /Android/i.test(ua)
     ? `intent://${url.replace(/^https?:\/\//, '')}#Intent;scheme=http;package=org.videolan.vlc;type=video/*;end`
@@ -171,6 +173,7 @@ export function openMenu(anchor, entries) {
   const el = document.createElement('div');
   el.className = 'menu';
   for (const e of entries) {
+    if (!e) continue;
     if (e === 'hr') {
       el.appendChild(document.createElement('hr'));
       continue;
@@ -233,6 +236,9 @@ function appMenu(anchor) {
     { icon: icons.magnet, label: 'Torrents', href: '#/torrents' },
     { icon: icons.refresh, label: 'Rescan library', onClick: () => api('/api/rescan', { method: 'POST' }).then(() => toast('Rescanning…')) },
     { icon: icons.link, label: 'Server addresses', onClick: showAddresses },
+    state.info?.auth?.enabled
+      ? { icon: icons.close, label: 'Sign out', onClick: () => api('/api/logout', { method: 'POST' }).finally(() => location.reload()) }
+      : null,
     'hr',
     {
       icon: icons.trash,
@@ -258,7 +264,7 @@ function toggleTheme() {
   const next = store.getSetting('theme') === 'dark' ? 'light' : 'dark';
   store.setSetting('theme', next);
   document.documentElement.dataset.theme = next;
-  $('meta[name=theme-color]').content = next === 'dark' ? '#0b0d12' : '#f6f7fb';
+  $('meta[name=theme-color]').content = next === 'dark' ? '#0e0c0d' : '#faf7f7';
   renderTopbar();
 }
 
@@ -597,6 +603,10 @@ async function boot() {
   onRoute();
 
   const es = new EventSource('/api/events');
+  es.onerror = () => {
+    // A dropped stream after a restart may mean the session password changed; check before retrying.
+    fetch('/api/auth').then((r) => r.json()).then((a) => a.required && !a.signedIn && location.reload()).catch(() => {});
+  };
   let reloadTimer;
   es.addEventListener('library', () => {
     clearTimeout(reloadTimer);

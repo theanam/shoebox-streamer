@@ -8,6 +8,7 @@ import { decide } from './decide.js';
 import { HlsManager, profileString } from './hls.js';
 import { toWebVTT, pickEncoder } from './ffmpeg.js';
 import { decodeText } from './subtitles.js';
+import { Auth } from './auth.js';
 
 const require = createRequire(import.meta.url);
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -127,6 +128,22 @@ async function externalToVtt(file, cacheDir) {
   }
 }
 
+// Reachable without signing in: the sign-in endpoints and what the sign-in page itself needs.
+const PUBLIC_PATHS = new Set(['/api/auth', '/api/login', '/api/logout', '/login.html', '/icon.svg', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png', '/manifest.webmanifest']);
+function isPublic(req, pathname) {
+  if (PUBLIC_PATHS.has(pathname)) return true;
+  // ffmpeg reads torrents through this loopback-only URL.
+  return /^\/api\/torrents\/[a-f0-9]{40}\/\d+\/raw$/.test(pathname) && isLoopback(req);
+}
+
+function serveLoginPage(res) {
+  fs.readFile(path.join(PUBLIC, 'login.html'), (err, buf) => {
+    if (err) return send(res, 500, 'sign-in page missing');
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(buf);
+  });
+}
+
 const isLoopback = (req) => {
   const a = req.socket.remoteAddress || '';
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
@@ -139,7 +156,7 @@ function episodeLabel(lib, it) {
   return [show?.name, se, it.parsed.title].filter(Boolean).join(' - ');
 }
 
-export function createApp({ library, artwork, torrents, subtitles, info, log }) {
+export function createApp({ library, artwork, torrents, subtitles, info, log, auth = new Auth() }) {
   const hls = new HlsManager({ library, log });
   const sseClients = new Set();
 
@@ -156,6 +173,23 @@ export function createApp({ library, artwork, torrents, subtitles, info, log }) 
   const routes = [];
   const route = (method, pattern, handler) => routes.push({ method, pattern, handler });
 
+  // ---------------------------------------------------------------- sign-in
+  route('GET', /^\/api\/auth$/, (req, res, m, url) => json(res, { required: auth.enabled, signedIn: auth.check(req, url) }));
+
+  route('POST', /^\/api\/login$/, async (req, res) => {
+    if (!auth.enabled) return json(res, { ok: true });
+    let password = '';
+    try {
+      password = String(JSON.parse((await readBody(req, 4096)).toString() || '{}').password || '');
+    } catch {}
+    const r = auth.login(req.socket.remoteAddress || '?', password);
+    if (r.ok) return send(res, 200, JSON.stringify({ ok: true }), 'application/json', { 'set-cookie': r.cookie });
+    if (r.retryAfter) log(`Repeated wrong passwords from ${req.socket.remoteAddress}; locked for ${r.retryAfter}s`);
+    json(res, { ok: false, error: r.retryAfter ? `Too many attempts. Try again in ${r.retryAfter} seconds.` : 'Wrong password', retryAfter: r.retryAfter }, r.retryAfter ? 429 : 401);
+  });
+
+  route('POST', /^\/api\/logout$/, (req, res) => send(res, 200, JSON.stringify({ ok: true }), 'application/json', { 'set-cookie': auth.logoutCookie() }));
+
   // ---------------------------------------------------------------- API
   route('GET', /^\/api\/info$/, async (req, res) => {
     json(res, {
@@ -164,6 +198,9 @@ export function createApp({ library, artwork, torrents, subtitles, info, log }) 
       torrents: { available: torrents?.available ?? false, error: torrents?.error },
       subtitles: subtitles?.publicInfo() || { providers: [], languages: [], autoDownload: false },
       activeTranscodes: hls.activeJobs,
+      auth: { enabled: auth.enabled, session: auth.session },
+      // For players that can't sign in (VLC, native HLS): append as ?k= to media URLs.
+      mediaKey: auth.mediaKey(),
     });
   });
 
@@ -213,8 +250,8 @@ export function createApp({ library, artwork, torrents, subtitles, info, log }) 
     }
     hls.stopClient(client);
     const out = { mode: d.mode, reason: d.reason, audio: d.audio, duration: it.probe.duration };
-    if (d.mode === 'direct') out.url = `/media/${it.id}`;
-    else out.url = `/hls/${it.id}/${profileString(d)}/${client}/index.m3u8`;
+    if (d.mode === 'direct') out.url = auth.withKey(`/media/${it.id}`);
+    else out.url = auth.withKey(`/hls/${it.id}/${profileString(d)}/${client}/index.m3u8`);
     if (d.height) out.height = d.height;
     json(res, out);
   });
@@ -237,12 +274,15 @@ export function createApp({ library, artwork, torrents, subtitles, info, log }) 
     streamRange(req, res, { size: it.size, type, filename, open: (r) => fs.createReadStream(it.path, r) });
   });
 
-  route('GET', /^\/hls\/([\w]+)\/([\w-]+)\/([\w-]+)\/index\.m3u8$/, async (req, res, [, id, profile, client]) => {
+  route('GET', /^\/hls\/([\w]+)\/([\w-]+)\/([\w-]+)\/index\.m3u8$/, async (req, res, [, id, profile, client], url) => {
     const it = library.get(id);
     if (!it) return send(res, 404, 'not found');
     try {
       const s = await hls.session(it, profile, client);
-      send(res, 200, s.playlist(), 'application/vnd.apple.mpegurl');
+      // Native HLS players don't always send cookies, so segments inherit the playlist's media key.
+      const k = url.searchParams.get('k');
+      const text = k ? s.playlist().replace(/^(seg-\d+\.ts)$/gm, `$1?k=${encodeURIComponent(k)}`) : s.playlist();
+      send(res, 200, text, 'application/vnd.apple.mpegurl');
     } catch (e) {
       send(res, e.status || 500, e.message);
     }
@@ -346,6 +386,7 @@ export function createApp({ library, artwork, torrents, subtitles, info, log }) 
   route('GET', /^\/playlist\/(show|item)\/([\w]+)\.m3u$/, (req, res, [, kind, id], url) => {
     // Prefer a raw LAN IP: external players don't always resolve .local names.
     const base = info().urls[0] || `http://${req.headers.host}`;
+    const key = auth.mediaKey();
     let items = [];
     if (kind === 'show') {
       const show = library.shows.get(id);
@@ -366,7 +407,7 @@ export function createApp({ library, artwork, torrents, subtitles, info, log }) 
     const lines = ['#EXTM3U'];
     for (const it of items) {
       lines.push(`#EXTINF:${Math.round(it.probe?.duration || -1)},${episodeLabel(library, it)}`);
-      lines.push(`${base}/media/${it.id}/${encodeURIComponent(path.basename(it.rel))}`);
+      lines.push(base + auth.withKey(`/media/${it.id}/${encodeURIComponent(path.basename(it.rel))}`, key));
     }
     send(res, 200, lines.join('\n') + '\n', 'audio/x-mpegurl', {
       'content-disposition': `attachment; filename="shoebox-${kind}-${id}.m3u"`,
@@ -433,6 +474,12 @@ export function createApp({ library, artwork, torrents, subtitles, info, log }) 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     try {
+      if (auth.enabled && !isPublic(req, url.pathname) && !auth.check(req, url)) {
+        // The app's routes live in the #fragment, so only the page itself gets the sign-in form.
+        const page = req.method === 'GET' && (url.pathname === '/' || url.pathname.endsWith('.html'));
+        if (page) return serveLoginPage(res);
+        return json(res, { error: 'sign-in required' }, 401);
+      }
       for (const r of routes) {
         const methods = Array.isArray(r.method) ? r.method : [r.method];
         if (!methods.includes(req.method)) continue;
