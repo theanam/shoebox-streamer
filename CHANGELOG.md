@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.5.1] - 2026-10-10
+
+### Fixed
+- The player's back button sometimes did nothing, or left Shoebox: after opening a video from a direct link, a
+  reload, or Safari restoring the tab. It now goes back only when the previous page is part of Shoebox, and
+  otherwise closes to the show or the library.
+- In the player, notifications such as "Resumed at…" now always appear below the top bar, so they can't cover
+  its buttons (including when Shoebox is added to the home screen).
+
 ## [0.5.0] - 2026-10-09
 
 ### Added

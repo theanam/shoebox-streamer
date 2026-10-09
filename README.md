@@ -32,7 +32,7 @@ npx shoebox-streamer
 Shoebox prints an address and a QR code. Open the address on any device on the same network:
 
 ```
-  📦 Shoebox v0.5.0  serving /Users/you/Movies
+  📦 Shoebox v0.5.1  serving /Users/you/Movies
 
   Network name: http://shoebox.local:7171
   On your LAN:  http://192.168.0.134:7171

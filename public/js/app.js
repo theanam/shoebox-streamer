@@ -539,7 +539,26 @@ app.addEventListener('click', (e) => {
   }
 });
 
+// Every history entry created inside Shoebox is tagged with its depth ({ shoebox: n }); browsers keep
+// history.state across reloads. Depth > 0 means "back" stays inside the app.
+let historyDepth = null;
+let replacing = false;
+function tagHistory() {
+  if (typeof history.state?.shoebox !== 'number') {
+    const depth = historyDepth === null ? 0 : replacing ? historyDepth : historyDepth + 1;
+    history.replaceState({ ...(history.state || {}), shoebox: depth }, '');
+  }
+  historyDepth = history.state.shoebox;
+  replacing = false;
+}
+function replaceHash(hash) {
+  if (location.hash === hash) return;
+  replacing = true;
+  location.replace(hash);
+}
+
 function onRoute() {
+  tagHistory();
   const prev = state.route;
   state.route = parseRoute();
   closeMenu();
@@ -582,7 +601,7 @@ function openPlayerFor(id) {
   const item = state.items.get(id);
   if (!item) {
     toast('That video is no longer in the library');
-    location.replace('#/');
+    replaceHash('#/');
     return;
   }
   lockScroll();
@@ -598,10 +617,16 @@ function openPlayerFor(id) {
     episodeRow,
     onClose: () => {
       const it = state.items.get(state.route.id);
-      if (history.length > 1 && lastViewKey) history.back();
-      else location.hash = it?.showId ? `#/show/${it.showId}` : '#/';
+      const fallback = it?.showId ? `#/show/${it.showId}` : '#/';
+      // Only step back if the previous entry is one of ours: after a reload, a direct link or a
+      // restored tab, "back" would leave Shoebox or do nothing.
+      if ((history.state?.shoebox || 0) > 0) {
+        const before = location.hash;
+        history.back();
+        setTimeout(() => location.hash === before && replaceHash(fallback), 500);
+      } else replaceHash(fallback);
     },
-    navigate: (itemId) => location.replace(`#/watch/${itemId}`),
+    navigate: (itemId) => replaceHash(`#/watch/${itemId}`),
   });
   state.player.load(item);
 }

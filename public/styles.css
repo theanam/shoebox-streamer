@@ -1161,7 +1161,7 @@ code {
 
 /* while the player is open, keep toasts clear of the control bar */
 body.no-scroll #toasts {
-  top: max(76px, env(safe-area-inset-top));
+  top: calc(max(12px, env(safe-area-inset-top)) + 64px); /* below the player's top bar, never over its buttons */
   bottom: auto;
 }
 @media (max-width: 560px) {
