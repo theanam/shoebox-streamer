@@ -2,6 +2,7 @@ import { $, $$, html, raw, esc, api, fmtTime, epCode, toast, copyText } from './
 import { icons } from './icons.js';
 import { capabilities } from './caps.js';
 import * as store from './store.js';
+import { dlog, debugOn } from './debug.js';
 
 const SPEEDS = [0.5, 0.75, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const QUALITIES = [
@@ -51,6 +52,9 @@ export class Player {
     this.idleTimer = 0;
     this.tapTimer = 0;
     this.lastTap = { t: 0, side: null };
+    this.shownAt = 0; // when the controls last faded in
+    this.resumeUntil = 0; // resume playback after native fullscreen closes, until this time
+    this.nativeFs = null;
     this.fallbackTried = false;
     this.wakeLock = null;
     this.build();
@@ -135,16 +139,26 @@ export class Player {
       const b = e.target.closest('[data-act]');
       if (b) {
         e.stopPropagation();
+        // A quick second tap on a touch screen lands on whatever control just faded in under the
+        // finger (often the big play/pause button). Ignore controls that are not visible yet.
+        if (isTouch && b.closest('.chrome') && performance.now() - this.shownAt < 450) {
+          dlog(`ignored tap on ${b.dataset.act}: controls were still appearing`);
+          return;
+        }
+        dlog(`action ${b.dataset.act}`);
         this.action(b.dataset.act, b);
       }
     });
 
     on(v, 'play', () => {
+      if (this.nativeFs) this.nativeFs.playing = true;
       this.restoreAfterPause();
       this.anchorTime();
       this.syncPlayState();
     });
     on(v, 'pause', () => {
+      if (this.nativeFs) Object.assign(this.nativeFs, { before: this.nativeFs.playing, playing: false, pausedAt: performance.now() });
+      if (performance.now() < this.resumeUntil) setTimeout(() => this.resumeAfterFullscreen(), 50);
       this.trackTime();
       if (!v.ended) this.pausedAt = { t: this.goodTime(), seekAt: this.userSeekAt };
       this.anchorTime();
@@ -160,7 +174,17 @@ export class Player {
     on(v, 'emptied', () => {
       if (!this.switchingSource && this.good) this.pendingStart = this.good.t;
     });
-    on(v, 'webkitendfullscreen', () => this.fitToViewport(true));
+    // iPhone's native fullscreen player pauses the video when it closes. Keep playing if it was playing.
+    on(v, 'webkitbeginfullscreen', () => (this.nativeFs = { playing: !v.paused, pausedAt: 0, before: !v.paused }));
+    on(v, 'webkitendfullscreen', () => {
+      const fs = this.nativeFs;
+      this.nativeFs = null;
+      this.fitToViewport(true);
+      const wasPlaying = fs && (fs.playing || (fs.before && performance.now() - fs.pausedAt < 1000));
+      if (!wasPlaying) return;
+      this.resumeUntil = performance.now() + 1000;
+      setTimeout(() => this.resumeAfterFullscreen(), 50);
+    });
     on(v, 'playing', () => {
       this.el.classList.remove('loading');
       this.syncPlayState();
@@ -183,6 +207,12 @@ export class Player {
       this.onEnded();
     });
     on(v, 'loadedmetadata', () => this.onMetadata());
+    if (debugOn) {
+      const evs = ['play', 'playing', 'pause', 'ended', 'waiting', 'stalled', 'emptied', 'loadstart', 'loadedmetadata', 'canplay', 'seeking', 'seeked', 'error', 'webkitbeginfullscreen', 'webkitendfullscreen', 'webkitpresentationmodechanged'];
+      for (const ev of evs) on(v, ev, () => dlog(`video ${ev} ${this.debugState()}`));
+      on(document, 'visibilitychange', () => dlog(`page ${document.visibilityState}`));
+      on(window, 'orientationchange', () => setTimeout(() => dlog(`rotated ${this.debugLayout()}`), 600));
+    }
     on(v, 'error', () => this.onVideoError());
 
     on(this.volInput, 'input', () => {
@@ -348,7 +378,13 @@ export class Player {
     if (this.audio == null) this.audio = res.audio;
     this.renderBadge();
     this.switchingSource = true;
-    this.teardownSource();
+    // Swap the source in place rather than emptying the element first: on iPhone an emptied video
+    // drops out of the native fullscreen player and loses its permission to start without a tap.
+    if (this.hls) {
+      this.hls.destroy();
+      this.hls = null;
+    }
+    $$('track', this.video).forEach((t) => t.remove());
     this.attachSubtitles();
     const v = this.video;
     v.playbackRate = store.getSetting('speed') || 1;
@@ -390,7 +426,8 @@ export class Player {
     if (autoplay) {
       try {
         await v.play();
-      } catch {
+      } catch (e) {
+        dlog(`autoplay refused: ${e.name} ${e.message} ${this.debugState()}`);
         this.el.classList.remove('loading');
         this.syncPlayState();
       }
@@ -507,9 +544,28 @@ export class Player {
     }
   }
 
+  resumeAfterFullscreen() {
+    const v = this.video;
+    if (!v.paused || v.ended || performance.now() > this.resumeUntil) return;
+    dlog('resuming after leaving fullscreen');
+    v.play().catch((e) => dlog(`resume refused: ${e.name} ${e.message}`));
+  }
+
+  debugState() {
+    const v = this.video;
+    return `t=${v.currentTime.toFixed(1)} paused=${v.paused} rs=${v.readyState} fs=${!!v.webkitDisplayingFullscreen} vis=${document.visibilityState}`;
+  }
+  debugLayout() {
+    const vv = window.visualViewport;
+    const btn = $('[data-act=fullscreen]', this.el);
+    const b = btn.getBoundingClientRect();
+    const view = vv ? `${Math.round(vv.width)}x${Math.round(vv.height)} scale=${vv.scale.toFixed(2)} off=${Math.round(vv.offsetLeft)},${Math.round(vv.offsetTop)}` : 'none';
+    return `inner=${innerWidth}x${innerHeight} vv=${view} player=${this.el.offsetWidth}x${this.el.offsetHeight} fsBtn=${Math.round(b.left)}-${Math.round(b.right)} hidden=${btn.hidden}`;
+  }
+
   toggle() {
     const v = this.video;
-    if (v.paused || v.ended) v.play().catch(() => {});
+    if (v.paused || v.ended) v.play().catch((e) => dlog(`play refused: ${e.name} ${e.message}`));
     else v.pause();
   }
 
@@ -1051,6 +1107,7 @@ export class Player {
 
   // ---------------------------------------------------------------- chrome visibility
   wake(stay = false) {
+    if (this.el.classList.contains('idle')) this.shownAt = performance.now();
     this.el.classList.remove('idle');
     clearTimeout(this.idleTimer);
     if (stay) return;
@@ -1067,6 +1124,11 @@ export class Player {
     const top = Math.round(vv ? vv.offsetTop : 0);
     this.el.style.height = `${h}px`;
     this.el.style.top = `${top}px`;
+    // After rotating, iPhone browsers can leave the page zoomed so the layout is wider than the screen,
+    // which pushes the rightmost controls (fullscreen) off the edge. Size to what is actually visible.
+    const narrower = vv && vv.width > 0 && vv.width < window.innerWidth - 1;
+    this.el.style.width = narrower ? `${Math.round(vv.width)}px` : '';
+    this.el.style.left = narrower ? `${Math.round(vv.offsetLeft)}px` : '';
     if (window.scrollY) window.scrollTo(0, 0);
     if (wake) this.wake();
   }

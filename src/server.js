@@ -207,6 +207,19 @@ export function createApp({ library, artwork, torrents, subtitles, info, log, au
 
   route('GET', /^\/api\/library$/, (req, res) => json(res, library.snapshot()));
 
+  // Player event log from browsers opened with ?debug (see public/js/debug.js).
+  route('POST', /^\/api\/debug$/, async (req, res) => {
+    let lines = [];
+    try {
+      lines = JSON.parse((await readBody(req, 64 * 1024)).toString()).lines;
+    } catch {}
+    const who = (req.socket.remoteAddress || '?').replace(/^::ffff:/, '');
+    if (Array.isArray(lines)) {
+      for (const l of lines.slice(0, 200)) log(`[debug ${who}] ${String(l).replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 400)}`);
+    }
+    json(res, { ok: true });
+  });
+
   route('POST', /^\/api\/rescan$/, (req, res) => {
     library.scan();
     json(res, { ok: true });

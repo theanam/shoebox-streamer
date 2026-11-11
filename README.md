@@ -153,6 +153,10 @@ IP address instead, or scan the QR code in the terminal.
 **Playback is choppy.** Pick a lower quality in the player's settings menu (720p works well on phones). If the badge in
 the top bar says *Transcode*, your computer is converting the video live, which needs more CPU.
 
+**Video pauses or misbehaves on one device.** Open Shoebox on that device with `?debug` at the end of the address
+(for example `http://shoebox.local:7171/?debug`). The terminal running Shoebox then shows what the player is doing,
+which helps tell a browser quirk from a Shoebox bug. Open it with `?debug=off` to stop.
+
 **Starting over.** Shoebox keeps thumbnails and file information in a hidden `.shoebox` folder inside the folder you
 serve. Delete it to rebuild everything.
 

@@ -4,6 +4,22 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.5.2] - 2026-11-12
+
+### Added
+- A playback log for diagnosing phones: open Shoebox with `?debug` at the end of the address (for example
+  `http://shoebox.local:7171/?debug`) and that browser reports what the video does (play, pause, fullscreen,
+  refused autoplay, screen size after rotating) in the terminal running Shoebox. `?debug=off` turns it off.
+
+### Fixed
+- iPhone: leaving the native fullscreen player paused the video. It now keeps playing if it was playing.
+- iPhone: a quick second tap on the video could land on the play/pause button as it faded in and pause the
+  video. Controls ignore taps until they are visible.
+- iPhone: after turning the phone to landscape, the fullscreen button could sit off the right edge of the
+  screen until the phone was turned back. The player now fits the visible part of the screen.
+- iPhone: switching to the next episode could leave it paused, especially from fullscreen. The video's source is
+  now swapped in place instead of emptying the player first.
+
 ## [0.5.1] - 2026-10-10
 
 ### Fixed
